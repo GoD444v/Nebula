@@ -54,6 +54,7 @@ import com.example.nebula.ui.theme.SunnyYellow
 import com.example.nebula.ui.theme.TextGrey
 import com.example.nebula.viewmodel.DownloadViewModel
 import com.example.nebula.viewmodel.PlaylistsViewModel
+import com.example.nebula.viewmodel.activeDownloadCount
 
 /** Placeholder tile colour, cycling the same three accents the mockup used. */
 private val tileAccents = listOf(NeonPink, SunnyYellow, MintTeal)
@@ -74,26 +75,38 @@ fun PlaylistsScreen(
             .background(MaterialTheme.colorScheme.background)
             .padding(16.dp)
     ) {
-        // Banner
-        Box {
-            Box(
-                modifier = Modifier
-                    .offset(x = 5.dp, y = 5.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(MaterialTheme.colorScheme.outline)
-                    .padding(horizontal = 20.dp, vertical = 10.dp)
-            ) {
-                Text("Playlists", color = MaterialTheme.colorScheme.onSurface)
+        // Banner + downloads button, so the list below is entirely playlists.
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.Top
+        ) {
+            Box(modifier = Modifier.weight(1f)) {
+                Box(
+                    modifier = Modifier
+                        .offset(x = 5.dp, y = 5.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(MaterialTheme.colorScheme.outline)
+                        .padding(horizontal = 20.dp, vertical = 10.dp)
+                ) {
+                    Text("Playlists", color = MaterialTheme.colorScheme.onSurface)
+                }
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(MaterialTheme.colorScheme.primary)
+                        .border(3.dp, BorderBlack, RoundedCornerShape(12.dp))
+                        .padding(horizontal = 20.dp, vertical = 10.dp)
+                ) {
+                    Text("Playlists", fontWeight = FontWeight.Black, fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurface)
+                }
             }
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(MaterialTheme.colorScheme.primary)
-                    .border(3.dp, BorderBlack, RoundedCornerShape(12.dp))
-                    .padding(horizontal = 20.dp, vertical = 10.dp)
-            ) {
-                Text("Playlists", fontWeight = FontWeight.Black, fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurface)
-            }
+
+            Spacer(modifier = Modifier.width(12.dp))
+
+            DownloadsIconButton(
+                activeCount = activeDownloadCount(downloads),
+                onClick = onOpenDownloads
+            )
         }
 
         Spacer(modifier = Modifier.height(8.dp))
@@ -126,12 +139,6 @@ fun PlaylistsScreen(
         }
 
         Spacer(modifier = Modifier.height(14.dp))
-
-        // Echo's pattern: downloads live as the top entry of the playlists list
-        // instead of their own bottom-nav tab.
-        DownloadsCard(count = downloads.size, onClick = onOpenDownloads)
-
-        Spacer(modifier = Modifier.height(12.dp))
 
         if (playlists.isEmpty()) {
             Box(
@@ -299,66 +306,62 @@ private fun PlaylistCard(
 }
 
 /**
- * Top-of-list entry into the download queue. Same card anatomy as [PlaylistCard]
- * (offset shadow, 3px border) so it reads as a playlist — because that is what it
- * is now that the Downloads tab is gone.
+ * Header button into the download queue, pinned to the top-right of the banner.
+ *
+ * Built from the same primitives as [PlaylistCard] — offset shadow, 3px
+ * [BorderBlack] border, 16dp corners — so it cannot drift from the VoxMusic look.
+ * Deliberately NOT a full-width row: downloads are a queue with its own screen,
+ * not a playlist, and a card-sized entry made it read as one.
+ *
+ * The badge counts downloads still in flight and is not composed at all when that
+ * count is zero, rather than being drawn transparent.
  */
 @Composable
-private fun DownloadsCard(count: Int, onClick: () -> Unit) {
+fun DownloadsIconButton(activeCount: Int, onClick: () -> Unit) {
     Box {
         Box(
             modifier = Modifier
                 .offset(x = 4.dp, y = 4.dp)
-                .fillMaxWidth()
-                .height(72.dp)
+                .size(BUTTON_SIZE)
                 .clip(RoundedCornerShape(16.dp))
                 .background(MaterialTheme.colorScheme.outline)
         )
-        Row(
+        Box(
             modifier = Modifier
-                .fillMaxWidth()
-                .height(72.dp)
+                .size(BUTTON_SIZE)
                 .clip(RoundedCornerShape(16.dp))
-                .background(MaterialTheme.colorScheme.surface)
+                .background(MintTeal)
                 .border(3.dp, BorderBlack, RoundedCornerShape(16.dp))
-                .clickable(onClick = onClick)
-                .padding(10.dp),
-            verticalAlignment = Alignment.CenterVertically
+                .clickable(onClick = onClick),
+            contentAlignment = Alignment.Center
         ) {
-            Box(
-                modifier = Modifier
-                    .width(52.dp)
-                    .aspectRatio(1f)
-                    .clip(RoundedCornerShape(20.dp))
-                    .background(MintTeal)
-                    .border(3.dp, BorderBlack, RoundedCornerShape(20.dp)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    Icons.Filled.Download,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.size(26.dp)
-                )
-            }
+            Icon(
+                Icons.Filled.Download,
+                contentDescription = "Downloads",
+                tint = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.size(26.dp)
+            )
 
-            Spacer(modifier = Modifier.width(12.dp))
-
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    "Downloads",
-                    fontWeight = FontWeight.Black,
-                    fontSize = 14.sp,
-                    maxLines = 1,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-                Text(
-                    "$count tracks",
-                    fontSize = 12.sp,
-                    maxLines = 1,
-                    color = TextGrey
-                )
+            if (activeCount > 0) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .offset(x = 6.dp, y = (-6).dp)
+                        .clip(RoundedCornerShape(50.dp))
+                        .background(NeonPink)
+                        .border(2.dp, BorderBlack, RoundedCornerShape(50.dp))
+                        .padding(horizontal = 6.dp, vertical = 1.dp)
+                ) {
+                    Text(
+                        "$activeCount",
+                        fontWeight = FontWeight.Black,
+                        fontSize = 10.sp,
+                        color = BorderBlack
+                    )
+                }
             }
         }
     }
 }
+
+private val BUTTON_SIZE = 52.dp

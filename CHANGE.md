@@ -1,5 +1,64 @@
 # Nebula — Change Log
 
+## [v0.5.0] — 2026-09-30
+
+### [Done] Downloads moved to a top-right header button
+- `PlaylistsScreen.kt`: the 72dp full-width `DownloadsCard` row is gone, replaced by a
+  52dp `DownloadsIconButton` pinned to the top-right of the "Playlists" banner. The card
+  was a dead end — an icon, the word "Downloads" and a count, occupying a full row in a
+  list it did not belong to.
+- New button uses the same primitives as `PlaylistCard` (offset shadow at 4,4dp, 3px
+  `BorderBlack` border, 16dp corners, `MintTeal` fill) so it cannot drift from the
+  VoxMusic look. Not a copy of Echo's `AutoPlaylistButton`, which is a 2-per-row chip
+  with no count.
+- **Count badge**: a `NeonPink` bubble in the top-right corner showing downloads still
+  in flight, not composed at all when that count is zero. Counts QUEUED, DOWNLOADING,
+  PAUSED, RESTARTING and FAILED; excludes COMPLETED and REMOVING.
+- `DownloadViewModel.kt`: new top-level `activeDownloadCount(items)` so the rule is
+  unit-testable without a device. `DownloadItem`/`DownloadStatus` are plain data classes.
+- Tapping still opens `DownloadQueueScreen` — routing unchanged.
+- Tests: 3 new Compose cases (icon always visible, badge at 3, badge absent at 0) and
+  3 new plain JUnit cases for the count. 19 instrumented + all unit tests green.
+- **Still not delivered:** a "Downloaded" *playlist* with play/shuffle/repeat/reorder/
+  rename. Downloads live in Media3's `DownloadIndex`, which has no name, no order and
+  no artist, so reorder and rename have nowhere to live. That needs its own design.
+
+---
+
+## [v0.4.2] — 2026-09-30
+
+### [Done] Fix: app crashed on every download start (P0)
+- `NebulaDownloadService` passed `channelNameResourceId = 0` to `DownloadService`. Its
+  `onCreate` hands that to `NotificationUtil.createNotificationChannel`, which calls
+  `getString()` on it — `getString(0)` throws `Resources$NotFoundException` and the
+  service died before Nebula's own `onCreate` body ran.
+- Fixed by passing a real resource, `R.string.nebula_download_channel_name` (new string
+  in `values/strings.xml`). The description arg stays `0` — Media3 never dereferences it.
+- Root cause: Media3's own `DownloadService` default is `0` (see its constructor), but
+  that default is only safe for its no-arg convenience constructor. Copying the literal
+  `0` into the explicit 5-arg constructor is what caused the crash.
+- Cross-checked against Echo's `ExoDownloadService`, which passes `R.string.downloading`
+  and `0` for the description only.
+- Found by the Playlists screen test, which initialises the same subsystem.
+
+### [Done] Playlists — local store, Plan A complete
+- `playlists` + `playlist_songs` tables, `NebulaDatabase` v1→v2 with a real migration
+  (no `fallbackToDestructiveMigration` — it would wipe scanned `local_songs`)
+- `PlaylistDao`: `songCount` counted in SQL, not Kotlin; duplicate add is a no-op via
+  composite PK + `IGNORE`, and the caller is told how many rows were genuinely new
+- `PlaylistsViewModel`: create / rename / delete / addSongs
+- `PlaylistsScreen`: `stubPlaylists` gone, real data, empty + populated states, Coil
+  covers with accent-tile fallback. **VoxMusic visuals preserved verbatim.**
+- 15 instrumented tests green on a physical device (API 34)
+
+### [Todo] Manual QA — visuals
+- Nobody has eyeballed the Playlists screen since the rewrite. No test asserts styling,
+  so a regression in the 3D banner, the `N PLAYLISTS` pill, or the card border/offset
+  shadow would pass CI silently. Needs: open the Playlists tab, compare against the
+  pre-change build.
+
+---
+
 ## [v0.4.1] — 2026-09-30
 
 ### [In Progress] Downloads restructure — fix failure, notification, moved into Playlists

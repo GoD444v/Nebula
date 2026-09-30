@@ -129,3 +129,14 @@ class DownloadViewModel(application: Application) : AndroidViewModel(application
         )
     }
 }
+
+/**
+ * How many downloads are still in flight, for the badge on the Playlists header
+ * button. A finished download is not "downloading", and one already on its way out
+ * is not either — the user cannot act on it.
+ *
+ * Top-level rather than a member so it can be unit tested without a device;
+ * DownloadItem and DownloadStatus are plain data classes.
+ */
+fun activeDownloadCount(items: List<DownloadItem>): Int =
+    items.count { it.status != DownloadStatus.COMPLETED && it.status != DownloadStatus.REMOVING }
