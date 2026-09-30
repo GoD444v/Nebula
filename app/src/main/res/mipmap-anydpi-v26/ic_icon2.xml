@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Adaptive (API 26+) version of icon 2. -->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@drawable/ic_icon2_art" />
+    <foreground android:drawable="@drawable/ic_icon_foreground_clear" />
+</adaptive-icon>

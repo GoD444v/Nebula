@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Empty foreground layer: the whole icon is the background art, so nothing gets
+     shrunk into the 66% safe zone the way a foreground layer would be.
+     Using a vector drawable instead of a shape for correct adaptive icon rendering. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M0,0h108v108h-108z" />
+</vector>

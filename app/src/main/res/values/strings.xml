@@ -1,0 +1,8 @@
+<resources>
+    <string name="app_name">Nebula</string>
+    <string name="nebula_remove_all_downloads">Remove all</string>
+    <plurals name="nebula_download_count">
+        <item quantity="one">%d song</item>
+        <item quantity="other">%d songs</item>
+    </plurals>
+</resources>
