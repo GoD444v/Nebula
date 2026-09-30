@@ -54,6 +54,9 @@ dependencies {
     implementation(libs.androidx.room.runtime)
     implementation(libs.androidx.room.ktx)
     ksp(libs.androidx.room.compiler)
+    // Room codegen for androidTest too, so the v1 migration fixture in
+    // PlaylistMigrationTest gets a generated _Impl. Test-only, never shipped.
+    kspAndroidTest(libs.androidx.room.compiler)
     // DataStore for theme + tab order persistence
     implementation(libs.androidx.datastore.preferences)
     // ponytail: pinned to media3 catalog version 1.6.1; skipped media3-ui (no video widgets)
