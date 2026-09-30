@@ -1,14 +1,24 @@
 package com.example.nebula
 
 import android.content.Context
+import androidx.room.Dao
 import androidx.room.Database
+import androidx.room.Entity
+import androidx.room.ForeignKey
+import androidx.room.Index
+import androidx.room.Insert
+import androidx.room.PrimaryKey
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.example.nebula.data.db.NebulaDatabase
 import com.example.nebula.data.db.dao.LocalSongDao
+import com.example.nebula.data.db.dao.PlaylistDao
 import com.example.nebula.data.db.entities.LocalSong
+import com.example.nebula.data.db.entities.PlaylistEntity
+import com.example.nebula.data.db.entities.PlaylistSongEntity
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -27,6 +37,67 @@ import org.junit.runner.RunWith
 @Database(entities = [LocalSong::class], version = 1, exportSchema = false)
 abstract class V1FixtureDatabase : RoomDatabase() {
     abstract fun localSongDao(): LocalSongDao
+}
+
+/**
+ * v2 of NebulaDatabase, as it shipped: the two playlist tables, but NO `isSystem`
+ * column.
+ *
+ * These are deliberately *not* the production entities. Room derives a fixture's
+ * schema from the entity classes it is given, so a fixture built on today's
+ * [PlaylistEntity] would already contain `isSystem` and MIGRATION_2_3 would fail
+ * with "duplicate column name". A migration test has to describe the shape the
+ * database actually had, which means a snapshot of the old entity.
+ */
+@Entity(tableName = "playlists")
+data class PlaylistV2Entity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val name: String,
+    val thumbnailUrl: String? = null,
+    val createdAt: Long = System.currentTimeMillis(),
+    val lastUpdatedAt: Long = System.currentTimeMillis()
+)
+
+@Entity(
+    tableName = "playlist_songs",
+    primaryKeys = ["playlistId", "videoId"],
+    foreignKeys = [
+        ForeignKey(
+            entity = PlaylistV2Entity::class,
+            parentColumns = ["id"],
+            childColumns = ["playlistId"],
+            onDelete = ForeignKey.CASCADE
+        )
+    ],
+    indices = [Index("playlistId")]
+)
+data class PlaylistSongV2Entity(
+    val playlistId: Long,
+    val videoId: String,
+    val title: String,
+    val artist: String,
+    val thumbnailUrl: String? = null,
+    val position: Int,
+    val addedAt: Long = System.currentTimeMillis()
+)
+
+@Dao
+interface V2FixtureDao {
+    @Insert
+    suspend fun insertPlaylist(playlist: PlaylistV2Entity): Long
+
+    @Insert
+    suspend fun insertSong(song: PlaylistSongV2Entity)
+}
+
+@Database(
+    entities = [LocalSong::class, PlaylistV2Entity::class, PlaylistSongV2Entity::class],
+    version = 2,
+    exportSchema = false
+)
+abstract class V2FixtureDatabase : RoomDatabase() {
+    abstract fun localSongDao(): LocalSongDao
+    abstract fun fixtureDao(): V2FixtureDao
 }
 
 /**
@@ -96,6 +167,69 @@ class PlaylistMigrationTest {
         val songs = runBlocking { migrated.localSongDao().getAllSongs() }
         assertEquals(1, songs.size)
         assertEquals("Kept Through Migration", songs.first().title)
+        migrated.close()
+    }
+
+    // ---- v2 -> v3: the isSystem column ----
+
+    private fun seedV2() {
+        val fixture = Room.databaseBuilder(context, V2FixtureDatabase::class.java, dbName)
+            .allowMainThreadQueries()
+            .build()
+        runBlocking {
+            val id = fixture.fixtureDao().insertPlaylist(PlaylistV2Entity(name = "Existing Playlist"))
+            fixture.fixtureDao().insertSong(
+                PlaylistSongV2Entity(
+                    playlistId = id,
+                    videoId = "vid-x",
+                    title = "Kept Song",
+                    artist = "Artist",
+                    thumbnailUrl = null,
+                    position = 0
+                )
+            )
+        }
+        fixture.close()
+    }
+
+    private fun openV2SeedThenMigrate(): NebulaDatabase =
+        NebulaDatabase.builder(context, dbName).allowMainThreadQueries().build()
+
+    @Test
+    fun migratesV2ToV3_addsIsSystemDefaultingToZero() {
+        seedV2()
+
+        val migrated = openV2SeedThenMigrate()
+        migrated.openHelper.writableDatabase
+            .query("PRAGMA table_info(playlists)")
+            .use { cursor ->
+                var sawIsSystem = false
+                while (cursor.moveToNext()) {
+                    if (cursor.getString(cursor.getColumnIndexOrThrow("name")) == "isSystem") {
+                        sawIsSystem = true
+                    }
+                }
+                assertTrue("playlists has no isSystem column after v2->v3", sawIsSystem)
+            }
+        // Existing playlists are user playlists, not the system one.
+        val rows = runBlocking { migrated.playlistDao().observePlaylists().first() }
+        assertEquals(1, rows.size)
+        assertTrue("existing playlists must default to isSystem = false", !rows.single().playlist.isSystem)
+        migrated.close()
+    }
+
+    @Test
+    fun migratesV2ToV3_preservesExistingPlaylistsAndSongs() {
+        seedV2()
+
+        val migrated = openV2SeedThenMigrate()
+        val playlists = runBlocking { migrated.playlistDao().observePlaylists().first() }
+        val songs = runBlocking {
+            migrated.playlistDao().observeSongs(playlists.single().playlist.id).first()
+        }
+        assertEquals("Existing Playlist", playlists.single().playlist.name)
+        assertEquals(1, songs.size)
+        assertEquals("Kept Song", songs.single().title)
         migrated.close()
     }
 

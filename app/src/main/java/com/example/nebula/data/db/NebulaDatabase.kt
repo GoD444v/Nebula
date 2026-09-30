@@ -14,7 +14,7 @@ import com.example.nebula.data.db.entities.PlaylistSongEntity
 
 @Database(
     entities = [LocalSong::class, PlaylistEntity::class, PlaylistSongEntity::class],
-    version = 2,
+    version = 3,
     exportSchema = false
 )
 abstract class NebulaDatabase : RoomDatabase() {
@@ -39,7 +39,7 @@ abstract class NebulaDatabase : RoomDatabase() {
             name: String = DB_NAME
         ): RoomDatabase.Builder<NebulaDatabase> =
             Room.databaseBuilder(context.applicationContext, NebulaDatabase::class.java, name)
-                .addMigrations(MIGRATION_1_2)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
 
         fun getDatabase(context: Context): NebulaDatabase {
             return INSTANCE ?: synchronized(this) {
@@ -97,5 +97,16 @@ val MIGRATION_1_2 = object : Migration(1, 2) {
             "CREATE INDEX IF NOT EXISTS `index_playlist_songs_playlistId` " +
                 "ON `playlist_songs` (`playlistId`)"
         )
+    }
+}
+
+/**
+ * v2 -> v3 adds the isSystem flag that marks the built-in Downloaded playlist.
+ * One column, no backfill: the NOT NULL DEFAULT 0 makes every existing playlist a
+ * user playlist, which is what they all are.
+ */
+val MIGRATION_2_3 = object : Migration(2, 3) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE `playlists` ADD COLUMN `isSystem` INTEGER NOT NULL DEFAULT 0")
     }
 }
