@@ -7,6 +7,7 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import com.example.nebula.data.db.dao.LocalSongDao
+import com.example.nebula.data.db.dao.PlaylistDao
 import com.example.nebula.data.db.entities.LocalSong
 import com.example.nebula.data.db.entities.PlaylistEntity
 import com.example.nebula.data.db.entities.PlaylistSongEntity
@@ -19,6 +20,8 @@ import com.example.nebula.data.db.entities.PlaylistSongEntity
 abstract class NebulaDatabase : RoomDatabase() {
 
     abstract fun localSongDao(): LocalSongDao
+
+    abstract fun playlistDao(): PlaylistDao
 
     companion object {
         const val DB_NAME = "nebula_database"
