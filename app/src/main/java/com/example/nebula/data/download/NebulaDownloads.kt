@@ -23,6 +23,7 @@ import androidx.media3.exoplayer.offline.DownloadService
 import androidx.media3.exoplayer.scheduler.Requirements
 import com.example.nebula.NebulaApplication
 import com.example.nebula.data.SearchRepository
+import com.example.nebula.data.models.SearchResult
 import com.example.nebula.player.NebulaDownloadService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -184,13 +185,19 @@ object NebulaDownloads {
 
     // ---- Public API used by the ViewModel / UI ----
 
-    fun enqueue(videoId: String, title: String) {
-        val request = DownloadRequest.Builder(videoId, Uri.parse(IDLE_URI_PREFIX + videoId))
+    /**
+     * Takes the whole [SearchResult], not a bare id and title: the Downloaded playlist
+     * writes its rows from the download index, and the index only ever stores what is
+     * handed to it here. Passing id+title meant artist and artwork were discarded at
+     * enqueue time and could never be recovered.
+     */
+    fun enqueue(song: SearchResult) {
+        val request = DownloadRequest.Builder(song.videoId, Uri.parse(IDLE_URI_PREFIX + song.videoId))
             // Without this the DataSpec reaching the resolver has a null key, the
             // placeholder URI survives resolution, and the download fails on DNS.
             // Media3 takes the key from here, NOT from the request id.
-            .setCustomCacheKey(videoId)
-            .setData(title.toByteArray())
+            .setCustomCacheKey(song.videoId)
+            .setData(song.title.toByteArray())
             .build()
         // Echo's pattern: sendAddDownload STARTS the foreground service, which is
         // what shows the progress notification (with its cancel action). A bare

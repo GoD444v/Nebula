@@ -294,6 +294,14 @@ class PlayerViewModel : ViewModel() {
         playerManager.setShuffleModeEnabled(shuffleOn)
     }
 
+    /**
+     * The playing song with all its metadata. The separate `currentSongTitle` /
+     * `currentArtist` / `currentVideoId` fields have no thumbnail, so anything that
+     * needs artwork — saving for offline, sharing — has to come from the queue entry
+     * rather than be reassembled from scalars.
+     */
+    fun currentSong(): SearchResult? = queue.getOrNull(queueIndex)
+
     // Echo's Start Radio: fresh related songs replace everything after the
     // current one. Empty or failed fetch leaves the queue untouched.
     fun startRadio() {

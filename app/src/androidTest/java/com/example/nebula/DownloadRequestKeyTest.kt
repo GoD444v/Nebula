@@ -32,8 +32,14 @@ class DownloadRequestKeyTest {
 
         // Echo's own video, used by the InnerTube test fixtures.
         val videoId = "dQw4w9WgXcQ"
+        val song = com.example.nebula.data.models.SearchResult(
+            videoId = videoId,
+            title = "Download key probe",
+            artist = "Probe Artist",
+            thumbnailUrl = "https://example.invalid/art.jpg"
+        )
 
-        NebulaDownloads.enqueue(videoId, "Download key probe")
+        NebulaDownloads.enqueue(song)
 
         // Wait for the DownloadManager to publish the request; enqueue is async.
         val download = runBlocking {

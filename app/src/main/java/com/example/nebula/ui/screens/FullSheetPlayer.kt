@@ -289,8 +289,10 @@ fun FullSheetPlayer(vm: PlayerViewModel, onClose: () -> Unit) {
                     .clip(RoundedCornerShape(14.dp))
                     .background(MaterialTheme.colorScheme.surface)
                     .border(3.dp, BorderBlack, RoundedCornerShape(14.dp))
-                    .clickable(enabled = !alreadySaved && vm.currentVideoId.isNotBlank()) {
-                        NebulaDownloads.enqueue(vm.currentVideoId, vm.currentSongTitle)
+                    .clickable(enabled = !alreadySaved && vm.currentSong() != null) {
+                        // The whole song, so artist and artwork reach the download index
+                        // and can populate the Downloaded playlist later.
+                        vm.currentSong()?.let { NebulaDownloads.enqueue(it) }
                     }
                     .padding(horizontal = 16.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically
