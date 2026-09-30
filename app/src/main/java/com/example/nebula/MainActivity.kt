@@ -109,7 +109,9 @@ class MainActivity : ComponentActivity() {
             var screen by remember { mutableStateOf("home") }
             var showSheet by remember { mutableStateOf(false) }
             var showTabCustomizer by remember { mutableStateOf(false) }
-            val defaultTabs = listOf("home", "search", "playlists", "downloads", "settings")
+            // "downloads" is intentionally absent: it is no longer a nav tab —
+            // it lives inside Playlists now (PlaylistsScreen's Downloads card).
+            val defaultTabs = listOf("home", "search", "playlists", "settings")
             var activeTabs by remember { mutableStateOf(defaultTabs) }
             // Album/playlist detail page — lives inside the Home tab
             var detailId by remember { mutableStateOf<String?>(null) }
@@ -120,7 +122,9 @@ class MainActivity : ComponentActivity() {
                 val prefs = context.navDataStore.data.first()
                 val saved = prefs[stringPreferencesKey("tab_order")]
                     ?.split(",")
-                    ?.filter { it.isNotBlank() }
+                    // Old installs persisted "downloads"; drop it so the removed
+                    // tab doesn't resurrect from the saved order.
+                    ?.filter { it.isNotBlank() && it != "downloads" }
                 if (!saved.isNullOrEmpty()) {
                     activeTabs = saved
                 }
@@ -158,6 +162,8 @@ class MainActivity : ComponentActivity() {
             BackHandler(enabled = showSheet || screen != "home" || detailId != null) {
                 when {
                     showSheet -> showSheet = false
+                    // Downloads is entered from Playlists, so back goes there.
+                    screen == "downloads" -> screen = "playlists"
                     screen != "home" -> screen = "home"
                     else -> { detailId = null; detailTitle = "" }
                 }
@@ -209,8 +215,10 @@ class MainActivity : ComponentActivity() {
                                             }
                                         }
                                         "search"    -> SearchScreen(vm, onPlayDone = { screen = "home" })
-                                        "playlists" -> PlaylistsScreen()
-                                        "downloads" -> DownloadQueueScreen(onBack = { screen = "home" })
+                                        // Downloads is reached from the Playlists
+                                        // card, not the nav bar — the route stays.
+                                        "playlists" -> PlaylistsScreen(onOpenDownloads = { screen = "downloads" })
+                                        "downloads" -> DownloadQueueScreen(onBack = { screen = "playlists" })
                                         else        -> SettingsScreen(onCustomizeTabs = { showTabCustomizer = true })
                                     }
                                 }

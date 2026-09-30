@@ -19,9 +19,11 @@ import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.exoplayer.offline.Download
 import androidx.media3.exoplayer.offline.DownloadManager
 import androidx.media3.exoplayer.offline.DownloadRequest
+import androidx.media3.exoplayer.offline.DownloadService
 import androidx.media3.exoplayer.scheduler.Requirements
 import com.example.nebula.NebulaApplication
 import com.example.nebula.data.SearchRepository
+import com.example.nebula.player.NebulaDownloadService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -161,13 +163,19 @@ object NebulaDownloads {
      * used as the request id), so swap in a currently-valid stream URL. Blocking
      * is fine here: this runs on DownloadManager's own fixed thread pool, never
      * the main thread.
+     *
+     * Resolution failure must THROW, never fall back to the placeholder URL:
+     * a thrown IOException fails the attempt so Media3 retries with backoff
+     * (and recovers on its own when the network returns), while returning
+     * https://nebula.local/ guarantees a bogus UnknownHostException that
+     * masks the real reason.
      */
     @Throws(IOException::class)
     private fun resolveStreamUri(dataSpec: DataSpec): DataSpec {
         val videoId = dataSpec.key ?: dataSpec.uri.lastPathSegment ?: return dataSpec
         val url = runBlocking(Dispatchers.IO) {
             searchRepository.getAudioStreamUrl(videoId)
-        } ?: return dataSpec
+        } ?: throw IOException("Could not resolve stream URL for $videoId")
         return dataSpec.buildUpon().setUri(Uri.parse(url)).build()
     }
 
@@ -177,7 +185,15 @@ object NebulaDownloads {
         val request = DownloadRequest.Builder(videoId, Uri.parse(IDLE_URI_PREFIX + videoId))
             .setData(title.toByteArray())
             .build()
-        manager.addDownload(request)
+        // Echo's pattern: sendAddDownload STARTS the foreground service, which is
+        // what shows the progress notification (with its cancel action). A bare
+        // manager.addDownload() runs headless — no service, no notification.
+        DownloadService.sendAddDownload(
+            checkNotNull(appContext) { "NebulaDownloads.init(context) was never called" },
+            NebulaDownloadService::class.java,
+            request,
+            /* foreground= */ false
+        )
     }
 
     fun observe(songId: String): Flow<Download?> = downloads.map { it[songId] }

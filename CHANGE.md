@@ -1,5 +1,31 @@
 # Nebula — Change Log
 
+## [v0.4.1] — 2026-09-30
+
+### [In Progress] Downloads restructure — fix failure, notification, moved into Playlists
+- **Download failure fixed** (`NebulaDownloads.kt`): `resolveStreamUri()` now **throws** `IOException`
+  when URL resolution fails instead of returning the fake `https://nebula.local/` URL —
+  the old fallback guaranteed `UnknownHostException` and hid the real cause; throwing lets
+  Media3 retry with backoff and recovers when the network returns (Echo's exact behavior)
+- `SearchRepository.kt`: `getAudioStreamUrl()` now logs the swallowed exception (`Log.w`) —
+  failures are visible in logcat instead of silently becoming `null`
+- **Notification with cancel** (`NebulaDownloads.kt`): `enqueue()` now starts downloads via
+  `DownloadService.sendAddDownload(..., NebulaDownloadService::class.java, ...)` — this starts
+  the foreground service, so the progress notification (with its existing cancel/trash action)
+  finally appears; previously nothing ever started the service, so downloads ran headless
+- **Downloads tab removed**: `MainActivity.kt` — `"downloads"` dropped from `defaultTabs`, and
+  filtered out of the persisted `tab_order` (old installs); `TabCustomizerScreen.kt` — downloads
+  removed from `allAvailableTabs`
+- **Downloads card added to Playlists** (`PlaylistsScreen.kt`): `DownloadsCard` at the top of the
+  playlists list (same card anatomy as playlist cards, mint tile + download icon, live track count
+  from `DownloadViewModel`), opens the existing `DownloadQueueScreen`
+- Back navigation: system back / in-screen back from Downloads returns to Playlists, not Home
+- Follows Echo-Music's pattern: no Downloads nav tab, downloads surfaced inside the playlists list,
+  `sendAddDownload`-started service with a cancel action on the progress notification
+- PR #569 — answers posted on issues #527, #528, #529, #530, #461, #463, #465, #448, #447, #462, #466
+
+---
+
 ## [v0.4.0] — 2026-09-30
 
 ### [In Progress] Playlists — spec + implementation plan written, awaiting review

@@ -1,5 +1,6 @@
 package com.example.nebula.data
 
+import android.util.Log
 import com.example.nebula.data.models.HomeCard
 import com.example.nebula.data.models.HomeChip
 import com.example.nebula.data.models.HomeFeed
@@ -491,7 +492,10 @@ class SearchRepository {
                     expiresAtMs = System.currentTimeMillis() + STREAM_URL_TTL_MS
                 )
             }
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            // Swallowing to null is fine (callers decide), but silently doing it
+            // made download failures undiagnosable — log the real reason.
+            Log.w("SearchRepository", "getAudioStreamUrl failed for $videoId", e)
             null
         }
     }

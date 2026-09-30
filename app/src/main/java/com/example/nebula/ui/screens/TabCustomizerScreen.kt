@@ -22,7 +22,6 @@ import androidx.compose.material.icons.filled.Album
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.DragHandle
-import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.LibraryMusic
@@ -63,7 +62,6 @@ val allAvailableTabs = listOf(
     NavTab("home", "Home", Icons.Filled.MusicNote),
     NavTab("search", "Search", Icons.Filled.Search),
     NavTab("playlists", "Playlists", Icons.Filled.PlaylistPlay),
-    NavTab("downloads", "Downloads", Icons.Filled.Download),
     NavTab("library", "Library", Icons.Filled.LibraryMusic),
     NavTab("albums", "Albums", Icons.Filled.Album),
     NavTab("artists", "Artists", Icons.Filled.People),
