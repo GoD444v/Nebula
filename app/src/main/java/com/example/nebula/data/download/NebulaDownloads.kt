@@ -159,8 +159,8 @@ object NebulaDownloads {
     }
 
     /**
-     * The DataSpec carries the videoId as its cache key (that is what the caller
-     * used as the request id), so swap in a currently-valid stream URL. Blocking
+     * The DataSpec carries the videoId as its custom cache key (set by
+     * enqueue via setCustomCacheKey), so swap in a currently-valid stream URL. Blocking
      * is fine here: this runs on DownloadManager's own fixed thread pool, never
      * the main thread.
      *
@@ -172,7 +172,10 @@ object NebulaDownloads {
      */
     @Throws(IOException::class)
     private fun resolveStreamUri(dataSpec: DataSpec): DataSpec {
-        val videoId = dataSpec.key ?: dataSpec.uri.lastPathSegment ?: return dataSpec
+        // Must fail loudly. Returning the DataSpec untouched looks harmless but hands
+        // the placeholder URI straight to the network, which surfaces as an
+        // UnknownHostException that says nothing about the real cause.
+        val videoId = dataSpec.key ?: throw IOException("Download request has no custom cache key")
         val url = runBlocking(Dispatchers.IO) {
             searchRepository.getAudioStreamUrl(videoId)
         } ?: throw IOException("Could not resolve stream URL for $videoId")
@@ -183,6 +186,10 @@ object NebulaDownloads {
 
     fun enqueue(videoId: String, title: String) {
         val request = DownloadRequest.Builder(videoId, Uri.parse(IDLE_URI_PREFIX + videoId))
+            // Without this the DataSpec reaching the resolver has a null key, the
+            // placeholder URI survives resolution, and the download fails on DNS.
+            // Media3 takes the key from here, NOT from the request id.
+            .setCustomCacheKey(videoId)
             .setData(title.toByteArray())
             .build()
         // Echo's pattern: sendAddDownload STARTS the foreground service, which is
