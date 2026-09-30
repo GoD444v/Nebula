@@ -48,6 +48,19 @@ abstract class NebulaDatabase : RoomDatabase() {
                 instance
             }
         }
+
+        /**
+         * Drops the cached instance so an instrumented test can start from an empty
+         * database. `getDatabase` memoises for the process lifetime, which would
+         * otherwise leak state between test methods.
+         */
+        @androidx.annotation.VisibleForTesting
+        fun closeForTests() {
+            synchronized(this) {
+                INSTANCE?.close()
+                INSTANCE = null
+            }
+        }
     }
 }
 
