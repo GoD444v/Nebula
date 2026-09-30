@@ -36,7 +36,12 @@ class NebulaDownloadService : DownloadService(
     NOTIFICATION_ID,
     FOREGROUND_UPDATE_INTERVAL_MS,
     CHANNEL_ID,
-    /* channelNameResourceId= */ 0,
+    // Must be a real string: DownloadService.onCreate hands this to
+    // NotificationUtil.createNotificationChannel, which calls getString() on it. Media3's
+    // own placeholder here is 0, and getString(0) throws Resources.NotFoundException,
+    // killing the service the moment a download starts. The description is never
+    // dereferenced, so 0 is correct there.
+    R.string.nebula_download_channel_name,
     /* channelDescriptionResourceId= */ 0
 ) {
 

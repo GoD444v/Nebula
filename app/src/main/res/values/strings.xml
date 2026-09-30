@@ -1,6 +1,10 @@
 <resources>
     <string name="app_name">Nebula</string>
     <string name="nebula_remove_all_downloads">Remove all</string>
+    <!-- DownloadService.onCreate passes this to NotificationUtil.createNotificationChannel,
+         which calls getString() on it. Media3's own placeholder value is 0, and
+         getString(0) throws Resources.NotFoundException, crashing the service on start. -->
+    <string name="nebula_download_channel_name">Downloads</string>
     <plurals name="nebula_download_count">
         <item quantity="one">%d song</item>
         <item quantity="other">%d songs</item>
