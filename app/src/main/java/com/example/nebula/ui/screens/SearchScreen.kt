@@ -1,5 +1,17 @@
 package com.example.nebula.ui.screens
 
+import android.content.Context
+import android.content.Intent
+import android.widget.Toast
+import com.example.nebula.data.download.NebulaDownloads
+import com.example.nebula.data.models.SearchResult
+import com.example.nebula.ui.components.AddToPlaylistDialog
+import com.example.nebula.ui.components.SongInfoDialog
+import com.example.nebula.ui.components.SongMenuSheet
+import com.example.nebula.viewmodel.AddToPlaylistResult
+import com.example.nebula.viewmodel.PlaylistsViewModel
+import kotlinx.coroutines.launch
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -25,6 +37,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -35,6 +48,11 @@ import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.snapshotFlow
@@ -78,8 +96,11 @@ private val FilterOptions = listOf(
 fun SearchScreen(
     vm: PlayerViewModel = viewModel(),
     searchVm: SearchViewModel = viewModel(),
-    onPlayDone: () -> Unit = {}
+    onPlayDone: () -> Unit = {},
+    playlistsVm: PlaylistsViewModel? = null
 ) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val keyboard = LocalSoftwareKeyboardController.current
     val searchQuery by searchVm.searchQuery.collectAsState()
     val searchResults by searchVm.searchResults.collectAsState()
@@ -89,6 +110,13 @@ fun SearchScreen(
     val errorMessage by searchVm.errorMessage.collectAsState()
 
     val listState = rememberLazyListState()
+
+    // Which song the overflow menu, the playlist picker or the info dialog is acting on.
+    // Declared out here rather than inside the LazyColumn: a MutableState created in a
+    // list item's scope is rebuilt per item and does not survive the item.
+    var menuFor by remember { mutableStateOf<SearchResult?>(null) }
+    var addingToPlaylist by remember { mutableStateOf<SearchResult?>(null) }
+    var showingInfoFor by remember { mutableStateOf<SearchResult?>(null) }
 
     // Auto-load more results when user scrolls near the bottom
     LaunchedEffect(listState, searchResults) {
@@ -254,23 +282,24 @@ Box(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
                 modifier = Modifier.fillMaxSize()
             ) {
+
                 items(searchResults, key = { it.videoId }) { r ->
                     ResultCard(
                         title = r.title,
                         artist = r.artist,
                         thumbnailUrl = r.thumbnailUrl,
                         onPlay = {
-                            // Starts a radio seeded by this result rather than replacing the
-                            // queue with one song, matching how tapping a song behaves on
-                            // Home, an album or an artist. One song and nothing after it is
-                            // the wrong outcome from a search list.
-                            vm.startRadioFrom(r)
+                            // Tapping the card plays the song, the same as a playlist row.
+                            // A search result is a single song, not a set, so there is no
+                            // "rest" to queue behind it — it plays on its own.
+                            vm.play(r)
                             // Then reveal the player. The MiniPlayer is the player surface
                             // in this app — there is no player tab — so "open the player"
                             // means opening the full-screen sheet, which the user asked
                             // for after hitting play from a search result.
                             onPlayDone()
-                        }
+                        },
+                        onMore = { menuFor = r }
                     )
                 }
 
@@ -292,7 +321,94 @@ Box(
                 }
             }
         }
+
+        // One sheet at a time: the menu closes before the picker or the info dialog
+        // opens, so nothing stacks.
+        menuFor?.let { song ->
+            SongMenuSheet(
+                song = song,
+                isDownloaded = NebulaDownloads.isDownloaded(song.videoId),
+                onDismiss = { menuFor = null },
+                onPlayNext = { vm.playNext(song); menuFor = null },
+                onAddToQueue = { vm.addToQueue(song); menuFor = null },
+                onStartRadio = { vm.startRadioFrom(song); menuFor = null; onPlayDone() },
+                onAddToPlaylist = {
+                    menuFor = null
+                    addingToPlaylist = song
+                },
+                onShare = {
+                    menuFor = null
+                    shareSong(context, song)
+                },
+                onDownload = {
+                    NebulaDownloads.enqueue(song)
+                    menuFor = null
+                },
+                onRemoveDownload = {
+                    NebulaDownloads.remove(song.videoId)
+                    menuFor = null
+                },
+                // Artist and album browsing need a per-song browseId, which a search
+                // result does not carry. Omitted rather than wired to something that
+                // navigates nowhere.
+                onShowInfo = {
+                    menuFor = null
+                    showingInfoFor = song
+                }
+            )
+        }
+
+        val toAdd = addingToPlaylist
+        if (toAdd != null && playlistsVm != null) {
+            val playlists by playlistsVm.playlists.collectAsState()
+            AddToPlaylistDialog(
+                songs = listOf(toAdd),
+                playlists = playlists,
+                onAddToExisting = { id ->
+                    scope.launch {
+                        val result = playlistsVm.addToPlaylist(id, listOf(toAdd))
+                        addingToPlaylist = null
+                        toastAdded(context, result)
+                    }
+                },
+                onCreateWith = { name ->
+                    scope.launch {
+                        playlistsVm.createWithSongs(name, listOf(toAdd))
+                        addingToPlaylist = null
+                        Toast.makeText(context, "Added to $name", Toast.LENGTH_SHORT).show()
+                    }
+                },
+                onDismiss = { addingToPlaylist = null }
+            )
+        }
+
+        showingInfoFor?.let { song ->
+            SongInfoDialog(
+                title = song.title,
+                artist = song.artist,
+                artworkUrl = song.thumbnailUrl,
+                onDismiss = { showingInfoFor = null }
+            )
+        }
     }
+}
+
+/** Shares a plain text link, as the reference implementation does — no file attachment. */
+private fun shareSong(context: Context, song: SearchResult) {
+    val intent = Intent(Intent.ACTION_SEND).apply {
+        type = "text/plain"
+        putExtra(Intent.EXTRA_TEXT, "https://music.youtube.com/watch?v=${song.videoId}")
+    }
+    context.startActivity(Intent.createChooser(intent, null))
+}
+
+private fun toastAdded(context: Context, result: AddToPlaylistResult) {
+    val message = when {
+        result.added == 0 -> "Already in that playlist"
+        result.duplicates == 0 -> "Added ${result.added}"
+        else -> "Added ${result.added}, ${result.duplicates} already there"
+    }
+    Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
 }
 
 @Composable
@@ -336,7 +452,13 @@ private fun FilterChip(
 }
 
 @Composable
-private fun ResultCard(title: String, artist: String, thumbnailUrl: String, onPlay: () -> Unit) {
+private fun ResultCard(
+    title: String,
+    artist: String,
+    thumbnailUrl: String,
+    onPlay: () -> Unit,
+    onMore: () -> Unit
+) {
     Box {
         Box(
             modifier = Modifier
@@ -353,6 +475,9 @@ private fun ResultCard(title: String, artist: String, thumbnailUrl: String, onPl
                 .clip(RoundedCornerShape(16.dp))
                 .background(MaterialTheme.colorScheme.surface)
                 .border(3.dp, BorderBlack, RoundedCornerShape(16.dp))
+                // The card plays, matching the playlist rows. A play button beside the
+                // title read as "play this one song" while the row did something else.
+                .clickable(onClick = onPlay)
                 .padding(10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -401,24 +526,13 @@ private fun ResultCard(title: String, artist: String, thumbnailUrl: String, onPl
                 Text(title, fontWeight = FontWeight.Black, fontSize = 14.sp, maxLines = 1, color = MaterialTheme.colorScheme.onSurface)
                 Text(artist, fontSize = 12.sp, maxLines = 1, color = MaterialTheme.colorScheme.onSurface)
             }
-            Box {
-                Box(
-                    modifier = Modifier
-                        .offset(x = 3.dp, y = 3.dp)
-                        .size(44.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(MaterialTheme.colorScheme.outline)
+            // Its own tap target, so opening the menu does not also start playback.
+            IconButton(onClick = onMore) {
+                Icon(
+                    Icons.Filled.MoreVert,
+                    contentDescription = "More options for $title",
+                    tint = MaterialTheme.colorScheme.onSurface
                 )
-                IconButton(
-                    onClick = onPlay,
-                    modifier = Modifier
-                        .size(44.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(MaterialTheme.colorScheme.primary)
-                        .border(3.dp, BorderBlack, RoundedCornerShape(12.dp))
-                ) {
-                    Icon(Icons.Filled.PlayArrow, contentDescription = "Play", tint = MaterialTheme.colorScheme.onSurface)
-                }
             }
         }
     }

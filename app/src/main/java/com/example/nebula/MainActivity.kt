@@ -235,7 +235,11 @@ class MainActivity : ComponentActivity() {
                                          // Playing from search opens the full-screen player rather than
                                          // navigating to a tab: the MiniPlayer is the player surface here, and
                                          // switching to Home threw away the results the user was reading.
-                                         "search"    -> SearchScreen(vm, onPlayDone = { showSheet = true })
+                                         "search"    -> SearchScreen(
+                                            vm = vm,
+                                            onPlayDone = { showSheet = true },
+                                            playlistsVm = playlistsVm
+                                        )
                                         // Downloads is reached from the Playlists
                                         // card, not the nav bar — the route stays.
                                         "playlists" -> PlaylistsScreen(

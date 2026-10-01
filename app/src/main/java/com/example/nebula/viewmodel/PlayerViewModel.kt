@@ -221,12 +221,24 @@ class PlayerViewModel : ViewModel() {
             .apply()
     }
 
-    fun playYouTubeSong(videoId: String, title: String, artist: String, artUrl: String = "") {
+    /**
+     * Plays one song, replacing whatever was queued.
+     *
+     * The entry point for tapping a song with no meaningful neighbours — a search result,
+     * a single track. The previous call site used [playYouTubeSong], which takes loose
+     * strings; taking the whole [SearchResult] keeps the artwork and matches every other
+     * entry point.
+     */
+    fun play(item: SearchResult) {
         queue.clear()
-        queue.add(SearchResult(videoId, title, artist, artUrl))
+        queue.add(item)
         queueIndex = 0
         queueList = queue.toList()
-        resolveAndPlay(queue[0])
+        resolveAndPlay(item)
+    }
+
+    fun playYouTubeSong(videoId: String, title: String, artist: String, artUrl: String = "") {
+        play(SearchResult(videoId, title, artist, artUrl))
     }
 
     /** "Play All" on an album/playlist page: the whole list becomes the queue, first track plays. */
@@ -279,7 +291,36 @@ class PlayerViewModel : ViewModel() {
         resolveAndPlay(item)
     }
 
-    fun playQueueItem(item: SearchResult) {
+    /** The queue as the UI sees it, so a menu can show what is coming. */
+fun currentQueue(): List<SearchResult> = queue.toList()
+
+/**
+ * Queues [item] to play immediately after the current song.
+ *
+ * Distinct from adding to the end: "Play next" inserts after the playing track, which is
+ * what someone means when they reach for it from a song they just found.
+ */
+fun playNext(item: SearchResult) {
+    if (queue.isEmpty()) {
+        play(item)
+        return
+    }
+    val at = (queueIndex + 1).coerceIn(0, queue.size)
+    queue.add(at, item)
+    queueList = queue.toList()
+}
+
+/** Queues [item] at the end of the list. */
+fun addToQueue(item: SearchResult) {
+    if (queue.isEmpty()) {
+        play(item)
+        return
+    }
+    queue.add(item)
+    queueList = queue.toList()
+}
+
+fun playQueueItem(item: SearchResult) {
         queue.add(item)
         queueIndex = queue.lastIndex
         queueList = queue.toList()

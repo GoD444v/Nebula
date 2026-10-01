@@ -22,8 +22,9 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.ArrowDownward
+import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.RadioButtonChecked
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
@@ -34,6 +35,7 @@ import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -173,7 +175,6 @@ private fun DownloadedPlaylistContent(
 ) {
     var showRename by remember { mutableStateOf(false) }
     var overflowOpen by remember { mutableStateOf(false) }
-    var sortOpen by remember { mutableStateOf(false) }
     var sortType by remember { mutableStateOf(PlaylistSortType.CUSTOM) }
     var sortDescending by remember { mutableStateOf(false) }
 
@@ -194,17 +195,25 @@ private fun DownloadedPlaylistContent(
 
             Spacer(modifier = Modifier.weight(1f))
 
-            // Sort lives in the three-dot menu. Its current choice shows on the button
-            // itself, so the list is never in an order the header is not naming.
+            // One menu, not two. Sort used to get its own three-dot button next to the
+            // existing overflow, which put two identical icons in the header. The sort
+            // direction toggle was a separate arrow button too; it is now a menu item,
+            // which is also where it stops being a mystery icon.
             Box {
                 ChunkyIconButton(
                     icon = Icons.Filled.MoreVert,
-                    description = if (sortOpen) "Hide sort options" else "Show sort options",
+                    description = "More options",
                     tint = MaterialTheme.colorScheme.surface,
                     size = 48.dp,
-                    onClick = { sortOpen = !sortOpen }
+                    onClick = { overflowOpen = true }
                 )
-                DropdownMenu(expanded = sortOpen, onDismissRequest = { sortOpen = false }) {
+                DropdownMenu(expanded = overflowOpen, onDismissRequest = { overflowOpen = false }) {
+                    Text(
+                        "Sort by",
+                        fontSize = 12.sp,
+                        color = TextGrey,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
+                    )
                     PlaylistSortType.entries.forEach { type ->
                         DropdownMenuItem(
                             text = { Text(type.label) },
@@ -216,39 +225,30 @@ private fun DownloadedPlaylistContent(
                                     contentDescription = null
                                 )
                             },
-                            onClick = { sortType = type; sortOpen = false }
+                            onClick = { sortType = type; overflowOpen = false }
                         )
                     }
-                }
-            }
 
-            Spacer(modifier = Modifier.width(8.dp))
+                    // Hidden for Custom order: reversing a hand-arranged list is never
+                    // what the user meant, and the item would read as doing nothing.
+                    if (sortType != PlaylistSortType.CUSTOM) {
+                        DropdownMenuItem(
+                            text = { Text(if (sortDescending) "Descending" else "Ascending") },
+                            leadingIcon = {
+                                Icon(
+                                    if (sortDescending) Icons.Filled.ArrowDownward
+                                    else Icons.Filled.ArrowUpward,
+                                    contentDescription = null
+                                )
+                            },
+                            onClick = { sortDescending = !sortDescending }
+                        )
+                    }
 
-            // Direction is a separate control, hidden for Custom order: reversing a
-            // hand-arranged list is never what the user meant.
-            if (sortType != PlaylistSortType.CUSTOM) {
-                ChunkyIconButton(
-                    icon = Icons.Filled.KeyboardArrowDown,
-                    description = if (sortDescending) "Descending" else "Ascending",
-                    tint = MaterialTheme.colorScheme.surface,
-                    size = 48.dp,
-                    onClick = { sortDescending = !sortDescending }
-                )
-            }
+                    HorizontalDivider()
 
-            Spacer(modifier = Modifier.width(8.dp))
-
-            Box {
-                ChunkyIconButton(
-                    icon = Icons.Filled.MoreVert,
-                    description = "More options",
-                    tint = MaterialTheme.colorScheme.surface,
-                    size = 48.dp,
-                    onClick = { overflowOpen = true }
-                )
-                DropdownMenu(expanded = overflowOpen, onDismissRequest = { overflowOpen = false }) {
-                    // Rename only. No Delete entry exists here for the system playlist,
-                    // so there is nothing to disable and nothing to accidentally offer.
+                    // No Delete entry for the system playlist: dao.delete refuses
+                    // isSystem rows, so a Delete here would look enabled and do nothing.
                     DropdownMenuItem(
                         text = { Text("Rename") },
                         onClick = {
