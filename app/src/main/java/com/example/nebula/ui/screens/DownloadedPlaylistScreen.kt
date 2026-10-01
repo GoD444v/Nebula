@@ -19,10 +19,13 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import sh.calvin.reorderable.ReorderableItem
+import sh.calvin.reorderable.rememberReorderableLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowDownward
+import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.MoreVert
@@ -331,6 +334,17 @@ private fun DownloadedPlaylistContent(
                 sortSongs(songs.map { it.toSearchResult() }, sortType, sortDescending)
             }
 
+            // Reordering only makes sense while showing the manual order. Under Name or
+            // Artist the visible row order is not the stored order, so a drag index would
+            // refer to the wrong rows and "move" would silently rewrite someone else's
+            // position. Hidden rather than disabled, so there is no inert handle to tap.
+            val canReorder = sortType == PlaylistSortType.CUSTOM
+            val reorderableState = rememberReorderableLazyListState(lazyListState = listState) { from, to ->
+                // Indices come from `sorted`, which IS the manual list when canReorder is
+                // true — the two are the same list in that case by definition.
+                onMove(from.index, to.index)
+            }
+
             LazyColumn(
                 state = listState,
                 verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -338,12 +352,21 @@ private fun DownloadedPlaylistContent(
             ) {
                 itemsIndexed(sorted, key = { _, s -> s.videoId }) { index, song ->
                     val asSong = song
-                    DownloadedSongRow(
-                        song = asSong,
-                        position = index,
-                        onPlay = { onPlaySong(asSong) },
-                        onShowInfo = { onShowInfo(asSong) }
-                    )
+                    ReorderableItem(state = reorderableState, key = song.videoId) { itemScope ->
+                        DownloadedSongRow(
+                            song = asSong,
+                            position = index,
+                            onPlay = { onPlaySong(asSong) },
+                            onShowInfo = { onShowInfo(asSong) },
+                            // Applied to the handle only, so a long press anywhere else on
+                            // the row still reaches the row's own tap and info button.
+                            dragModifier = if (canReorder) {
+                                with(itemScope) { Modifier.longPressDraggableHandle() }
+                            } else {
+                                Modifier
+                            }
+                        )
+                    }
                 }
             }
         }
@@ -396,7 +419,9 @@ private fun DownloadedSongRow(
     song: SearchResult,
     position: Int,
     onPlay: () -> Unit,
-    onShowInfo: () -> Unit
+    onShowInfo: () -> Unit,
+    /** Drag modifier from the reorder library; [Modifier] when reordering is off. */
+    dragModifier: Modifier = Modifier
 ) {
     Box {
         Box(
@@ -455,6 +480,18 @@ private fun DownloadedSongRow(
                     contentDescription = "Song info for ${song.title}",
                     tint = MaterialTheme.colorScheme.onSurface
                 )
+            }
+
+            // Drag handle. Present only in Custom order, matching the reference
+            // implementation — see canReorder above.
+            if (dragModifier != Modifier) {
+                IconButton(onClick = {}, modifier = dragModifier) {
+                    Icon(
+                        Icons.Filled.DragHandle,
+                        contentDescription = "Reorder ${song.title}",
+                        tint = MaterialTheme.colorScheme.onSurface
+                    )
+                }
             }
         }
     }
