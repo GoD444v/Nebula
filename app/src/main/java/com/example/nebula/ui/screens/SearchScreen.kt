@@ -260,8 +260,11 @@ Box(
                         artist = r.artist,
                         thumbnailUrl = r.thumbnailUrl,
                         onPlay = {
-                            vm.playYouTubeSong(r.videoId, r.title, r.artist, r.thumbnailUrl)
-                            onPlayDone()
+                            // Starts a radio seeded by this result rather than replacing the
+                            // queue with one song, matching how tapping a song behaves on
+                            // Home, an album or an artist. One song and nothing after it is
+                            // the wrong outcome from a search list.
+                            vm.startRadioFrom(r)
                         }
                     )
                 }

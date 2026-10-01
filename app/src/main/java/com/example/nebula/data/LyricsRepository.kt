@@ -46,6 +46,37 @@ data class LyricsSearchHit(
  */
 class LyricsRepository {
 
+    /**
+     * Lyrics already fetched this session, keyed on the provider's own lookup input.
+     *
+     * All four providers are network APIs. Without a cache, a downloaded song is
+     * unplayable *and* un-lyricable offline even when its lyrics were fetched a minute
+     * ago, which reads as a bug rather than as an absent connection. The reference
+     * implementation solves this at download time by writing a lyrics row while the
+     * download runs; this is the session-scoped version, which covers the common case
+     * without needing a schema change.
+     *
+     * Case- and whitespace-insensitive, because providers match on title/artist text and
+     * the same song can arrive with different capitalisation from different screens.
+     */
+    private val cache = mutableMapOf<String, LyricsResponse>()
+
+    /** The key every provider lookup agrees on. */
+    private fun cacheKey(title: String, artist: String) =
+        "${title.trim().lowercase()}|${artist.trim().lowercase()}"
+
+    /** Call after a successful fetch so the next play of this song needs no network. */
+    fun remember(title: String, artist: String, lyrics: LyricsResponse) {
+        if (title.isBlank()) return
+        cache[cacheKey(title, artist)] = lyrics
+    }
+
+    /** Stored lyrics for this song, or null if never fetched this session. */
+    fun cached(title: String, artist: String): LyricsResponse? {
+        if (title.isBlank()) return null
+        return cache[cacheKey(title, artist)]
+    }
+
     private val json = Json { ignoreUnknownKeys = true }
 
     private val http = HttpClient(OkHttp) {
@@ -63,7 +94,18 @@ class LyricsRepository {
      * Providers never throw except on cancellation, so no per-provider
      * try/catch here.
      */
-    suspend fun getSyncedLyrics(title: String, artist: String, durationMs: Long): LyricsResponse? =
+    suspend fun getSyncedLyrics(title: String, artist: String, durationMs: Long): LyricsResponse? {
+        // Cache first, and never for the blank-title case below it — a cached miss must
+        // not short-circuit into returning null without trying the network once.
+        cached(title, artist)?.let { return it }
+        return fetchFromProviders(title, artist, durationMs)
+    }
+
+    private suspend fun fetchFromProviders(
+        title: String,
+        artist: String,
+        durationMs: Long
+    ): LyricsResponse? =
         withContext(Dispatchers.IO) {
             if (title.isBlank()) return@withContext null
             val results = coroutineScope {
@@ -92,24 +134,30 @@ class LyricsRepository {
             sane.forEachIndexed { i, r ->
                 if (r != null && r.isSynced && r.hasWordTimings) {
                     diag("${names[i]} won synced+words (${r.lines.size} lines)")
-                    return@withContext r
+                    return@withContext pick(title, artist, r)
                 }
             }
             sane.forEachIndexed { i, r ->
                 if (r != null && r.isSynced) {
                     diag("${names[i]} won synced (wordless, ${r.lines.size} lines)")
-                    return@withContext r
+                    return@withContext pick(title, artist, r)
                 }
             }
             sane.forEachIndexed { i, r ->
                 if (r != null && r.plainText.isNotBlank()) {
                     diag("${names[i]} won plain")
-                    return@withContext LyricsResponse(emptyList(), r.plainText)
+                    return@withContext pick(title, artist, LyricsResponse(emptyList(), r.plainText))
                 }
             }
             diag("no lyrics for '$title'")
             null
         }
+
+    /** Stores a winner so the next play of this song needs no network. */
+    private fun pick(title: String, artist: String, lyrics: LyricsResponse): LyricsResponse {
+        remember(title, artist, lyrics)
+        return lyrics
+    }
 
     /**
      * Returns null only when nothing was found. Callers must distinguish

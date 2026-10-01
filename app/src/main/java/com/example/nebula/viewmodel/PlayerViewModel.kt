@@ -1,6 +1,8 @@
 package com.example.nebula.viewmodel
 
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.Uri
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
@@ -91,6 +93,23 @@ class PlayerViewModel : ViewModel() {
     private var queueIndex = -1
     private var ticker: Job? = null
     private var lyricsTicker: Job? = null
+
+    /**
+     * Whether the device currently has no usable connection.
+     *
+     * Only used to word the lyrics empty state honestly: every lyrics provider is a
+     * network API, so offline a fetch fails and "no lyrics found" would be a claim the
+     * app cannot actually support. Kept coarse on purpose — this is a message, not a
+     * connectivity check that gates behaviour.
+     */
+    val isOffline: Boolean
+        get() = runCatching {
+            val cm = appContext?.getSystemService(Context.CONNECTIVITY_SERVICE)
+                as? ConnectivityManager ?: return@runCatching false
+            val active = cm.activeNetwork ?: return@runCatching true
+            val caps = cm.getNetworkCapabilities(active) ?: return@runCatching true
+            !caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+        }.getOrDefault(false)
     private var appContext: Context? = null
 
     fun attach(context: Context) {
@@ -220,6 +239,27 @@ class PlayerViewModel : ViewModel() {
         resolveAndPlay(queue[0])
     }
 
+    /**
+     * Plays [item] and queues similar songs behind it.
+     *
+     * The entry point for tapping a song outside a playlist — search results, home rows,
+     * an album or artist track list. Playing exactly one song and stopping there is the
+     * wrong outcome from a list: the user has signalled they want to keep listening.
+     *
+     * Falls back to playing the song alone if the related fetch fails, so a radio with no
+     * related tracks is still audible rather than silent.
+     */
+    fun startRadioFrom(item: SearchResult) {
+        queue.clear()
+        queue.add(item)
+        queueIndex = 0
+        queueList = queue.toList()
+        // startRadio() reads currentSong(), which is the queue head — so the item must be
+        // in place first. Calling it before this seeded the radio off the *previous* song.
+        startRadio()
+        resolveAndPlay(item)
+    }
+
     fun playQueueItem(item: SearchResult) {
         queue.add(item)
         queueIndex = queue.lastIndex
@@ -347,13 +387,18 @@ class PlayerViewModel : ViewModel() {
                 // Duration still belongs to the previous song here (the controller
                 // hasn't loaded the new item), and stale values skew matching —
                 // so fetch as unknown; providers rank by relevance instead.
-                _lyrics.value = try {
+                val fetched = try {
                     lyricsRepository.getSyncedLyrics(item.title, item.artist, 0L)
                 } catch (e: CancellationException) {
                     throw e
                 } catch (_: Exception) {
                     null
                 }
+                _lyrics.value = fetched
+                // Remember it. Every provider here is a network API, so without this a
+                // downloaded song showed "No lyrics found" offline even after it had been
+                // fetched successfully moments earlier — the fetch result was thrown away.
+                if (fetched != null) lyricsRepository.remember(item.title, item.artist, fetched)
                 updateLyricIndex()
             } finally {
                 // A stale fetch landing after a skip must not clear the new one.

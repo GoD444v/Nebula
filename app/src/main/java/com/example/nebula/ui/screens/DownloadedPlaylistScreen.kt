@@ -18,10 +18,15 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material.icons.filled.DragHandle
+import sh.calvin.reorderable.ReorderableItem
+import sh.calvin.reorderable.rememberReorderableLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PlayArrow
@@ -54,6 +59,7 @@ import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import com.example.nebula.data.db.entities.PlaylistSongEntity
 import com.example.nebula.data.models.SearchResult
+import com.example.nebula.ui.components.SongInfoDialog
 import com.example.nebula.ui.theme.BorderBlack
 import com.example.nebula.ui.theme.MintTeal
 import com.example.nebula.ui.theme.SunnyYellow
@@ -100,6 +106,7 @@ fun DownloadedPlaylistScreen(
     val name = playlists.firstOrNull { it.playlist.id == selectedId }?.playlist?.name
         ?: DownloadedFallbackName
     val items = songs.map { it.toSearchResult() }
+    var infoFor by remember { mutableStateOf<SearchResult?>(null) }
 
     DownloadedPlaylistContent(
         name = name,
@@ -111,8 +118,25 @@ fun DownloadedPlaylistScreen(
         onRepeat = playerVm::toggleRepeat,
         onRename = { newName -> selectedId?.let { vm.rename(it, newName) } },
         onMove = { from, to -> selectedId?.let { vm.reorder(it, from, to) } },
+        // Inside a playlist, tapping a song plays that song and keeps the rest of the
+        // playlist queued behind it — the opposite of startRadioFrom, which is for tapping
+        // a song in a search or browse list where the surrounding rows are not a set.
+        onPlaySong = { song ->
+            val rest = items.filter { it.videoId != song.videoId }
+            playerVm.playAll(rest + song)
+        },
+        onShowInfo = { song -> infoFor = song },
         onBack = onBack
     )
+
+    infoFor?.let { song ->
+        SongInfoDialog(
+            title = song.title,
+            artist = song.artist,
+            artworkUrl = song.thumbnailUrl,
+            onDismiss = { infoFor = null }
+        )
+    }
 }
 
 private const val DownloadedFallbackName = "Downloaded"
@@ -143,6 +167,8 @@ private fun DownloadedPlaylistContent(
     onRepeat: () -> Unit,
     onRename: (String) -> Unit,
     onMove: (Int, Int) -> Unit,
+    onPlaySong: (SearchResult) -> Unit,
+    onShowInfo: (SearchResult) -> Unit,
     onBack: () -> Unit
 ) {
     var showRename by remember { mutableStateOf(false) }
@@ -249,18 +275,41 @@ private fun DownloadedPlaylistContent(
                 )
             }
         } else {
+            val listState = rememberLazyListState()
+            // Long-press to lift a row and drag it, which is the gesture the reference
+            // implementation uses. The buttons stay as an accessible equivalent — drag
+            // alone would leave reorder unreachable for anyone who cannot do a long press.
+            val reorderableState = rememberReorderableLazyListState(lazyListState = listState) { from, to ->
+                onMove(from.index, to.index)
+            }
+
             LazyColumn(
+                state = listState,
                 verticalArrangement = Arrangement.spacedBy(10.dp),
                 modifier = Modifier.fillMaxSize()
             ) {
-                itemsIndexed(songs) { index, song ->
-                    DownloadedSongRow(
-                        song = song,
-                        canMoveUp = index > 0,
-                        canMoveDown = index < songs.lastIndex,
-                        onMoveUp = { onMove(index, index - 1) },
-                        onMoveDown = { onMove(index, index + 1) }
-                    )
+                itemsIndexed(songs, key = { _, s -> s.videoId }) { index, song ->
+                    val asSong = song.toSearchResult()
+                    // ReorderableItem supplies the item scope the drag handle needs, so
+                    // each row must be wrapped in it rather than the LazyColumn.
+                    ReorderableItem(
+                        state = reorderableState,
+                        key = song.videoId
+                    ) { itemScope ->
+                        // The item scope owns the drag modifier; longPressDraggableHandle
+                        // is what makes a long press lift the row.
+                        DownloadedSongRow(
+                            song = asSong,
+                            position = index,
+                            canMoveUp = index > 0,
+                            canMoveDown = index < songs.lastIndex,
+                            onMoveUp = { onMove(index, index - 1) },
+                            onMoveDown = { onMove(index, index + 1) },
+                            onPlay = { onPlaySong(asSong) },
+                            onShowInfo = { onShowInfo(asSong) },
+                            dragModifier = with(itemScope) { Modifier.longPressDraggableHandle() }
+                        )
+                    }
                 }
             }
         }
@@ -310,11 +359,22 @@ private fun CoverArt(thumbnailUrl: String?, size: androidx.compose.ui.unit.Dp) {
 
 @Composable
 private fun DownloadedSongRow(
-    song: PlaylistSongEntity,
+    song: SearchResult,
+    position: Int,
     canMoveUp: Boolean,
     canMoveDown: Boolean,
     onMoveUp: () -> Unit,
-    onMoveDown: () -> Unit
+    onMoveDown: () -> Unit,
+    onPlay: () -> Unit,
+    onShowInfo: () -> Unit,
+    /**
+     * Drag modifier from the reorder library's item scope, applied to the handle only.
+     *
+     * Passed as a plain Modifier rather than a lambda: the library hands the modifier to
+     * its caller, so there is nothing to wrap, and a composable-lambda parameter here only
+     * muddied the types.
+     */
+    dragModifier: Modifier = Modifier
 ) {
     Box {
         Box(
@@ -331,10 +391,22 @@ private fun DownloadedSongRow(
                 .height(64.dp)
                 .clip(RoundedCornerShape(16.dp))
                 .background(MaterialTheme.colorScheme.surface)
-                .border(3.dp, BorderBlack, RoundedCornerShape(16.dp))
+                .border(3.dp, BorderBlack, RoundedCornerShape(16.dp)
+                )
+                // The row itself plays the song. The reference implementation does the same:
+                // inside a playlist, tap plays from here rather than starting a radio.
+                .clickable(onClick = onPlay)
                 .padding(horizontal = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            Text(
+                "${position + 1}",
+                fontWeight = FontWeight.Black,
+                fontSize = 12.sp,
+                color = TextGrey,
+                modifier = Modifier.width(22.dp)
+            )
+
             CoverArt(thumbnailUrl = song.thumbnailUrl, size = 44.dp)
 
             Spacer(modifier = Modifier.width(12.dp))
@@ -352,6 +424,24 @@ private fun DownloadedSongRow(
                     fontSize = 12.sp,
                     maxLines = 1,
                     color = TextGrey
+                )
+            }
+
+            IconButton(onClick = onShowInfo) {
+                Icon(
+                    Icons.Filled.Info,
+                    contentDescription = "Song info for ${song.title}",
+                    tint = MaterialTheme.colorScheme.onSurface
+                )
+            }
+
+            // Only the handle carries the drag modifier, so a long press elsewhere on the
+            // row still reaches the row's own tap and its arrows.
+            IconButton(onClick = {}, modifier = dragModifier) {
+                Icon(
+                    Icons.Filled.DragHandle,
+                    contentDescription = "Reorder ${song.title}",
+                    tint = MaterialTheme.colorScheme.onSurface
                 )
             }
 

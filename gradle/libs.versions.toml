@@ -12,6 +12,10 @@ media3 = "1.6.1"
 room = "2.7.0"
 ksp = "2.3.10"
 datastore = "1.1.1"
+# Breaks the plan's "no new dependencies" rule, deliberately: long-press drag-to-reorder
+# is the requested behaviour and this is the library that provides it. 2.4.3 is the newest
+# release that predates the 3.x line's API rework; 3.x renames the state factory.
+reorderable = "2.4.3"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -35,6 +39,7 @@ androidx-room-runtime = { group = "androidx.room", name = "room-runtime", versio
 androidx-room-ktx = { group = "androidx.room", name = "room-ktx", version.ref = "room" }
 androidx-room-compiler = { group = "androidx.room", name = "room-compiler", version.ref = "room" }
 androidx-datastore-preferences = { group = "androidx.datastore", name = "datastore-preferences", version.ref = "datastore" }
+reorderable = { group = "sh.calvin.reorderable", name = "reorderable", version.ref = "reorderable" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

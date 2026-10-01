@@ -117,10 +117,20 @@ fun LyricsScreen(
                     modifier = Modifier.padding(horizontal = 20.dp)
                 )
                 // Fetch finished with no match — terminal state, never the spinner.
+                //
+                // Distinguishes "no provider has this song" from "we could not ask".
+                // All four providers are network APIs, so offline a downloaded song lands
+                // here, and claiming no lyrics exist when the truth is we had no way to
+                // look is the message that makes this read as a bug.
                 res == null -> Text(
-                    "No lyrics found for this song",
+                    if (vm.isOffline) {
+                        "No lyrics for this song.\nConnect to look them up."
+                    } else {
+                        "No lyrics found for this song"
+                    },
                     fontSize = 13.sp,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                    textAlign = TextAlign.Center,
                     modifier = Modifier.padding(horizontal = 20.dp)
                 )
                 // Plain-text fallback: same card, scrollable for long lyrics

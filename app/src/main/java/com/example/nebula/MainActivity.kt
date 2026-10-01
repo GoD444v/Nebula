@@ -228,7 +228,11 @@ class MainActivity : ComponentActivity() {
                                                 )
                                             }
                                         }
-                                        "search"    -> SearchScreen(vm, onPlayDone = { screen = "home" })
+                                        // Playing from search must not navigate. It used to set
+                                         // screen = "home" on play, so tapping a result teleported the
+                                         // user out of the results they were reading. The MiniPlayer
+                                         // is already visible from every tab, so there is nothing to gain.
+                                         "search"    -> SearchScreen(vm)
                                         // Downloads is reached from the Playlists
                                         // card, not the nav bar — the route stays.
                                         "playlists" -> PlaylistsScreen(
