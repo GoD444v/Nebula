@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.nebula.data.db.NebulaDatabase
+import com.example.nebula.data.download.NebulaDownloads
 import com.example.nebula.data.db.dao.PlaylistWithCount
 import com.example.nebula.data.db.entities.PlaylistEntity
 import com.example.nebula.data.db.entities.PlaylistSongEntity
@@ -20,6 +21,15 @@ import kotlinx.coroutines.launch
 class PlaylistsViewModel(app: Application) : AndroidViewModel(app) {
 
     private val dao = NebulaDatabase.getDatabase(app).playlistDao()
+
+    init {
+        // Repairs the Downloaded playlist against anything the listener missed while
+        // the app was dead. Done here, not in NebulaDownloads.init, so opening the app
+        // never writes to the database behind the user's back.
+        viewModelScope.launch {
+            NebulaDownloads.reconcileDownloadedPlaylist()
+        }
+    }
 
     val playlists: StateFlow<List<PlaylistWithCount>> =
         dao.observePlaylists()

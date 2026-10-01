@@ -23,6 +23,7 @@ import androidx.media3.exoplayer.offline.DownloadService
 import androidx.media3.exoplayer.scheduler.Requirements
 import com.example.nebula.NebulaApplication
 import com.example.nebula.data.SearchRepository
+import com.example.nebula.data.db.NebulaDatabase
 import com.example.nebula.data.models.SearchResult
 import com.example.nebula.player.NebulaDownloadService
 import kotlinx.coroutines.CoroutineScope
@@ -36,6 +37,7 @@ import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import java.io.IOException
 import java.util.concurrent.Executors
 
@@ -52,11 +54,12 @@ import java.util.concurrent.Executors
  * Because the download reads the player cache first, downloading a song you
  * already streamed reuses the bytes already on disk instead of fetching them
  * again. Because playback reads the download cache first, a saved song plays
- * from disk with no localUri check and no "is this downloaded?" branch.
+ * from disk with no localUri check and no "is it downloaded?" branch.
  *
- * Both sides key on the URL returned by [SearchRepository.getAudioStreamUrl],
- * which memoises per videoId precisely so the two resolve to the same string —
- * a mismatch there makes playback silently miss the download and re-stream.
+ * A download's cache key is the bare videoId, set by [enqueue] via
+ * setCustomCacheKey. Do not assume it is a resolved stream URL: Media3 takes the
+ * DataSpec key from setCustomCacheKey, not from the request id, and that
+ * distinction was the cause of a bug where every download failed on DNS.
  */
 @UnstableApi
 object NebulaDownloads {
@@ -76,6 +79,14 @@ object NebulaDownloads {
 
     private var downloadManager: DownloadManager? = null
 
+    /**
+     * Keeps the built-in Downloaded playlist in step with the index. Set by [init]
+     * before the DownloadManager exists, because the manager's listener is what feeds it.
+     */
+    private var playlistSync: DownloadedPlaylistSync? = null
+
+    private val syncScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
     /** The shared instance. [init] must have run; every caller does so first. */
     val manager: DownloadManager
         get() = checkNotNull(downloadManager) { "NebulaDownloads.init(context) was never called" }
@@ -88,6 +99,9 @@ object NebulaDownloads {
             if (downloadManager != null) return
             appContext = context.applicationContext
             DownloadPrefs.init(context)
+            playlistSync = DownloadedPlaylistSync(
+                NebulaDatabase.getDatabase(context).playlistDao()
+            )
             downloadManager = build(context.applicationContext)
             // Rehydrate on a background thread to avoid blocking the main thread
             rehydrateScope.launch {
@@ -98,7 +112,37 @@ object NebulaDownloads {
         }
     }
 
+    /**
+     * Repairs the Downloaded playlist after a process kill. Listener events are
+     * delivered in-process only, so a download that completed while the app was dead
+     * never reached the playlist and nothing else would ever correct it.
+     *
+     * Called when the playlists screen opens rather than from [init]: init must stay
+     * free of database writes, and repairing a list nobody is looking at is work
+     * thrown away. No-ops until [init] has run.
+     *
+     * The IO dispatcher is not optional. getDownloads() is a blocking SQLite read, and
+     * callers reach this from viewModelScope, which is Dispatchers.Main.
+     */
+    suspend fun reconcileDownloadedPlaylist() = withContext(Dispatchers.IO) {
+        val sync = playlistSync ?: return@withContext
+        val dm = downloadManager ?: return@withContext
+        val indexed = dm.downloadIndex.getDownloads().use { cursor ->
+            buildList {
+                while (cursor.moveToNext()) {
+                    val d = cursor.download
+                    if (d.state != Download.STATE_COMPLETED) continue
+                    songOf(d)?.let { add(DownloadedSong.from(it)) }
+                }
+            }
+        }
+        sync.reconcile(indexed)
+    }
+
     private fun build(app: Context): DownloadManager {
+        // Sync writes to Room, not to Media3, so it cannot be reached from this object's
+        // own listener without a DAO. Supplied by init() before build() runs.
+        val sync = checkNotNull(playlistSync) { "NebulaDownloads.playlistSync was never set" }
         val httpFactory = DefaultHttpDataSource.Factory()
 
         // Read-only view of the STREAM cache: a song already streamed while being
@@ -132,11 +176,19 @@ object NebulaDownloads {
             ) {
                 _downloads.value = _downloads.value.toMutableMap()
                     .apply { put(download.request.id, download) }
+                // Completions are the only progress event Media3 emits (updateProgress
+                // writes the index without notifying), and the one the Downloaded
+                // playlist cares about.
+                if (download.state == Download.STATE_COMPLETED) {
+                    val song = songOf(download)
+                    if (song != null) syncScope.launch { sync.onCompleted(song) }
+                }
             }
 
             override fun onDownloadRemoved(downloadManager: DownloadManager, download: Download) {
                 _downloads.value = _downloads.value.toMutableMap()
                     .apply { remove(download.request.id) }
+                syncScope.launch { sync.onRemoved(download.request.id) }
             }
         })
 
@@ -197,7 +249,7 @@ object NebulaDownloads {
             // placeholder URI survives resolution, and the download fails on DNS.
             // Media3 takes the key from here, NOT from the request id.
             .setCustomCacheKey(song.videoId)
-            .setData(song.title.toByteArray())
+            .setData(SongCodec.encode(song).toByteArray())
             .build()
         // Echo's pattern: sendAddDownload STARTS the foreground service, which is
         // what shows the progress notification (with its cancel action). A bare
@@ -240,9 +292,21 @@ object NebulaDownloads {
             .filter { it.state == Download.STATE_COMPLETED }
             .sumOf { it.contentLength.coerceAtLeast(0L) }
 
+    /** The whole playing song for a finished download, or null if not recoverable. */
+    fun songOf(download: Download): SearchResult? {
+        val decoded = SongCodec.decode(String(download.request.data))
+        if (decoded.title.isBlank()) return null
+        return SearchResult(
+            videoId = download.request.id,
+            title = decoded.title,
+            artist = decoded.artist,
+            thumbnailUrl = decoded.thumbnailUrl
+        )
+    }
+
     /** Display title stashed on the request at enqueue time. */
     fun titleOf(download: Download): String =
-        String(download.request.data).takeIf { it.isNotBlank() } ?: download.request.id
+        SongCodec.decode(String(download.request.data)).title.ifBlank { download.request.id }
 
     /**
      * Observe network state and reactively update [DownloadManager.requirements].
