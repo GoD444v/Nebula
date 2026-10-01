@@ -5,6 +5,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.media3.exoplayer.offline.Download
 import com.example.nebula.data.download.NebulaDownloads
+import com.example.nebula.data.models.SearchResult
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -25,6 +26,15 @@ enum class DownloadStatus { QUEUED, PAUSED, DOWNLOADING, COMPLETED, FAILED, REMO
 data class DownloadItem(
     val videoId: String,
     val title: String,
+    /**
+     * The full song, recovered from the download's own metadata.
+     *
+     * Null when the request predates SongCodec and carries a bare title, or when the
+     * title decoded blank. Callers that need artist or artwork — adding to a playlist —
+     * must skip a null song rather than insert a row with empty metadata that can never
+     * be filled in later.
+     */
+    val song: SearchResult? = null,
     val status: DownloadStatus,
     /** 0..100, or [UNKNOWN_PERCENT] when Media3 has no estimate yet. */
     val percent: Int,
@@ -39,6 +49,10 @@ data class DownloadItem(
         const val UNKNOWN_PERCENT = -1
     }
 }
+
+/** Stand-in song for @Preview rows, which have no Media3 Download to decode from. */
+internal fun previewSong(videoId: String) =
+    SearchResult(videoId, "Title $videoId", "Artist $videoId", "")
 
 /**
  * Read-only view of [NebulaDownloads] for the download queue screen.
@@ -109,6 +123,7 @@ class DownloadViewModel(application: Application) : AndroidViewModel(application
         return DownloadItem(
             videoId = d.request.id,
             title = NebulaDownloads.titleOf(d),
+            song = NebulaDownloads.songOf(d),
             status = when (d.state) {
                 // Media3 1.6.1 keeps only STOP_REASON_NONE, and NebulaDownloads never
                 // calls setStopReason, so STATE_STOPPED should not occur — if it ever

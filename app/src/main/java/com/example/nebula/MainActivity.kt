@@ -244,7 +244,10 @@ class MainActivity : ComponentActivity() {
                                             onBack = { playlistId = null; screen = "playlists" },
                                             playlistId = playlistId
                                         )
-                                        "downloads" -> DownloadQueueScreen(onBack = { screen = "playlists" })
+                                        "downloads" -> DownloadQueueScreen(
+                                            onBack = { screen = "playlists" },
+                                            playlistsVm = playlistsVm
+                                        )
                                         else        -> SettingsScreen(onCustomizeTabs = { showTabCustomizer = true })
                                     }
                                 }

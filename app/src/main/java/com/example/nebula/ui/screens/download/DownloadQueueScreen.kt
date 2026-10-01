@@ -1,5 +1,6 @@
 package com.example.nebula.ui.screens.download
 
+import android.widget.Toast
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -25,6 +26,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.PlaylistAdd
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Pause
@@ -38,10 +40,12 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -57,10 +61,16 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.nebula.ui.components.ChunkyAction
 import com.example.nebula.ui.components.ChunkyWindow
 import com.example.nebula.ui.theme.BorderBlack
+import com.example.nebula.ui.components.AddToPlaylistDialog
 import com.example.nebula.ui.theme.NebulaTheme
+import com.example.nebula.ui.theme.TextGrey
+import com.example.nebula.viewmodel.AddToPlaylistResult
 import com.example.nebula.viewmodel.DownloadItem
 import com.example.nebula.viewmodel.DownloadStatus
 import com.example.nebula.viewmodel.DownloadViewModel
+import com.example.nebula.viewmodel.PlaylistsViewModel
+import com.example.nebula.viewmodel.previewSong
+import kotlinx.coroutines.launch
 
 /** Sentinel for the bulk button; a YouTube videoId is never "*". */
 private const val CLEAR_ALL = "*"
@@ -72,18 +82,67 @@ private const val CLEAR_ALL = "*"
  * plain values, so the layout previews without an Application behind it.
  */
 @Composable
-fun DownloadQueueScreen(onBack: () -> Unit) {
+fun DownloadQueueScreen(
+    onBack: () -> Unit,
+    playlistsVm: PlaylistsViewModel? = null
+) {
     val vm: DownloadViewModel = viewModel()
     val downloads by vm.downloads.collectAsState()
     val isPaused by vm.isPaused.collectAsState()
+    val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+
+    // The picker needs the playlist list, which lives in PlaylistsViewModel. Resolved
+    // optionally so @Preview and the queue screen can still compose without one — the
+    // add button simply does nothing rather than crashing the screen.
+    val playlists = playlistsVm?.playlists?.collectAsState()?.value.orEmpty()
+
+    var addingVideoId by remember { mutableStateOf<String?>(null) }
+    val addingSong = remember(addingVideoId, downloads) {
+        downloads.firstOrNull { it.videoId == addingVideoId }?.song
+    }
+
     DownloadQueueContent(
         downloads = downloads,
         isPaused = isPaused,
         onBack = onBack,
         onTogglePause = { if (isPaused) vm.resumeAll() else vm.pauseAll() },
         onRemove = vm::remove,
-        onRemoveAll = vm::removeAll
+        onRemoveAll = vm::removeAll,
+        onRequestAddToPlaylist = { addingVideoId = it }
     )
+
+    if (addingSong != null && playlistsVm != null) {
+        AddToPlaylistDialog(
+            songs = listOf(addingSong),
+            playlists = playlists,
+            onAddToExisting = { id ->
+                scope.launch {
+                    val result = playlistsVm.addToPlaylist(id, listOf(addingSong))
+                    addingVideoId = null
+                    toastFor(context, result)
+                }
+            },
+            onCreateWith = { name ->
+                scope.launch {
+                    playlistsVm.createWithSongs(name, listOf(addingSong))
+                    addingVideoId = null
+                    Toast.makeText(context, "Added to $name", Toast.LENGTH_SHORT).show()
+                }
+            },
+            onDismiss = { addingVideoId = null }
+        )
+    }
+}
+
+/** Says what actually happened, including the "already there" case. */
+private fun toastFor(context: android.content.Context, result: AddToPlaylistResult) {
+    val message = when {
+        result.added == 0 -> "Already in that playlist"
+        result.duplicates == 0 -> "Added ${result.added}"
+        else -> "Added ${result.added}, ${result.duplicates} already there"
+    }
+    Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
 }
 
 @Composable
@@ -93,7 +152,8 @@ private fun DownloadQueueContent(
     onBack: () -> Unit,
     onTogglePause: () -> Unit,
     onRemove: (String) -> Unit,
-    onRemoveAll: () -> Unit
+    onRemoveAll: () -> Unit,
+    onRequestAddToPlaylist: (String) -> Unit = {}
 ) {
     // Removing is destructive and Media3 gives no undo — the file and its cached data
     // are gone. One window for both buttons: null = closed, a videoId = that song,
@@ -166,7 +226,11 @@ private fun DownloadQueueContent(
                 contentPadding = PaddingValues(bottom = 8.dp)
             ) {
                 items(downloads, key = { it.videoId }) { item ->
-                    DownloadRow(item) { removing = it }
+                    DownloadRow(
+                        item = item,
+                        onRequestRemove = { removing = it },
+                        onRequestAddToPlaylist = onRequestAddToPlaylist
+                    )
                 }
             }
         }
@@ -206,7 +270,11 @@ private fun DownloadQueueContent(
 }
 
 @Composable
-private fun DownloadRow(item: DownloadItem, onRequestRemove: (String) -> Unit) {
+private fun DownloadRow(
+    item: DownloadItem,
+    onRequestRemove: (String) -> Unit,
+    onRequestAddToPlaylist: (String) -> Unit
+) {
     val shape = RoundedCornerShape(14.dp)
     // Three accents, one job each: pink = in flight, teal = done, yellow = needs attention.
     // Idle states stay in plain ink so a still queue does not shout.
@@ -243,6 +311,18 @@ private fun DownloadRow(item: DownloadItem, onRequestRemove: (String) -> Unit) {
                         overflow = TextOverflow.Ellipsis,
                         color = MaterialTheme.colorScheme.onSurface
                     )
+                    // Artist only when it is actually known. A blank row reads as a bug;
+                    // omitting the line reads as a song with no credited artist.
+                    val artist = item.song?.artist.orEmpty()
+                    if (artist.isNotBlank()) {
+                        Text(
+                            artist,
+                            fontSize = 12.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            color = TextGrey
+                        )
+                    }
                     Spacer(modifier = Modifier.height(4.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(
@@ -265,6 +345,16 @@ private fun DownloadRow(item: DownloadItem, onRequestRemove: (String) -> Unit) {
                             Text(detail, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface)
                         }
                     }
+                }
+                // Only offered once the song's metadata is recoverable. Adding needs a real
+                // SearchResult, and a request from before SongCodec carries a bare title
+                // with no artist or artwork — a row built from that would insert a playlist
+                // entry that can never be completed later.
+                if (item.song != null) {
+                    ChunkyIconBtn(
+                        Icons.Filled.PlaylistAdd, "Add to playlist",
+                        MaterialTheme.colorScheme.secondary, 38.dp, 12.dp
+                    ) { onRequestAddToPlaylist(item.videoId) }
                 }
                 if (item.removable) {
                     ChunkyIconBtn(
@@ -486,13 +576,13 @@ private fun DownloadsBusyPreview() {
     NebulaTheme(darkTheme = false, paletteId = "classic") {
         DownloadQueueContent(
             downloads = listOf(
-                DownloadItem("a1", "Midnight City — M83", DownloadStatus.DOWNLOADING, 62, 3_211_264, 5_242_880, true),
-                DownloadItem("b2", "Somebody That I Used to Know", DownloadStatus.COMPLETED, 100, 7_340_032, 7_340_032, true),
+                DownloadItem("a1", "Midnight City — M83", previewSong("a1"), DownloadStatus.DOWNLOADING, 62, 3_211_264, 5_242_880, true),
+                DownloadItem("b2", "Somebody That I Used to Know", previewSong("b2"), DownloadStatus.COMPLETED, 100, 7_340_032, 7_340_032, true),
                 // contentLength -1 = the stream sent no Content-Length
-                DownloadItem("c3", "A Song With No Content-Length", DownloadStatus.DOWNLOADING, DownloadItem.UNKNOWN_PERCENT, 913_408, -1L, true),
-                DownloadItem("d4", "Broken Link", DownloadStatus.FAILED, 18, 442_368, 2_400_000, true),
-                DownloadItem("e5", "Waiting For Wi-Fi", DownloadStatus.QUEUED, 0, 0, 4_000_000, true),
-                DownloadItem("f6", "Going Away", DownloadStatus.REMOVING, 40, 1_200_000, 3_000_000, false)
+                DownloadItem("c3", "A Song With No Content-Length", previewSong("c3"), DownloadStatus.DOWNLOADING, DownloadItem.UNKNOWN_PERCENT, 913_408, -1L, true),
+                DownloadItem("d4", "Broken Link", previewSong("d4"), DownloadStatus.FAILED, 18, 442_368, 2_400_000, true),
+                DownloadItem("e5", "Waiting For Wi-Fi", previewSong("e5"), DownloadStatus.QUEUED, 0, 0, 4_000_000, true),
+                DownloadItem("f6", "Going Away", previewSong("f6"), DownloadStatus.REMOVING, 40, 1_200_000, 3_000_000, false)
             ),
             isPaused = false,
             onBack = {}, onTogglePause = {}, onRemove = {}, onRemoveAll = {}
@@ -506,8 +596,8 @@ private fun DownloadsAmoledPreview() {
     NebulaTheme(darkTheme = true, paletteId = "amoled") {
         DownloadQueueContent(
             downloads = listOf(
-                DownloadItem("a1", "Midnight City — M83", DownloadStatus.PAUSED, 62, 3_211_264, 5_242_880, true),
-                DownloadItem("b2", "Somebody That I Used to Know", DownloadStatus.COMPLETED, 100, 7_340_032, 7_340_032, true)
+                DownloadItem("a1", "Midnight City — M83", previewSong("a1"), DownloadStatus.PAUSED, 62, 3_211_264, 5_242_880, true),
+                DownloadItem("b2", "Somebody That I Used to Know", previewSong("b2"), DownloadStatus.COMPLETED, 100, 7_340_032, 7_340_032, true)
             ),
             isPaused = true,
             onBack = {}, onTogglePause = {}, onRemove = {}, onRemoveAll = {}

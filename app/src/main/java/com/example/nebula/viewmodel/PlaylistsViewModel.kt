@@ -21,6 +21,14 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 /**
+ * Outcome of adding songs to one playlist.
+ *
+ * Split counts rather than a boolean because "added 2, 1 was already there" and "nothing
+ * was added" are different messages and the user acted differently in each case.
+ */
+data class AddToPlaylistResult(val added: Int, val duplicates: Int)
+
+/**
  * Playlists the user has created in Nebula. Local-first: nothing here talks to
  * YouTube Music, so the tab works with no account and no network.
  */
@@ -102,6 +110,42 @@ class PlaylistsViewModel(app: Application) : AndroidViewModel(app) {
         val size = dao.observeSongs(playlistId).first().size
         if (from !in 0 until size || to !in 0 until size) return@launch
         dao.moveSong(playlistId, from, to)
+    }
+
+    /**
+     * Creates a playlist named [name] and immediately puts [songs] in it, returning the
+     * new playlist's id.
+     *
+     * One call rather than `create` then `addSongs`, because the two-step version leaves a
+     * real window in which the songs are lost: `create` launches into `viewModelScope` and
+     * returns immediately, so a caller cannot await the id it needs for `addSongs`. The
+     * insert happens inline here so the songs and the playlist are written together.
+     *
+     * The id is also published through [selectedPlaylistId], so the picker can create-then-
+     * populate and land the user in the playlist they just made.
+     *
+     * Returns null for a blank name, which [create] also rejects.
+     */
+    suspend fun createWithSongs(name: String, songs: List<SearchResult>): Long? {
+        val trimmed = name.trim()
+        if (trimmed.isEmpty()) return null
+        val id = dao.insert(PlaylistEntity(name = trimmed))
+        addSongs(id, songs)
+        select(id)
+        return id
+    }
+
+    /**
+     * Adds [songs] to an existing playlist and reports what happened, so the picker can
+     * tell the difference between "added" and "already there" instead of appearing to do
+     * nothing.
+     */
+    suspend fun addToPlaylist(id: Long, songs: List<SearchResult>): AddToPlaylistResult {
+        val added = addSongs(id, songs)
+        return AddToPlaylistResult(
+            added = added,
+            duplicates = songs.size - added
+        )
     }
 
     /**

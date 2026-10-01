@@ -20,6 +20,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.QueueMusic
@@ -112,6 +113,13 @@ fun PlaylistsScreen(
                     Text("Playlists", fontWeight = FontWeight.Black, fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurface)
                 }
             }
+
+            Spacer(modifier = Modifier.width(12.dp))
+
+            // Reachable at every list size, not just the empty state. Previously the only
+            // create affordance was the "Create your first playlist" button, so once a
+            // single playlist existed there was no way to make a second one.
+            NewPlaylistButton(onClick = { showCreateDialog = true })
 
             Spacer(modifier = Modifier.width(12.dp))
 
@@ -296,6 +304,41 @@ private fun PlaylistCard(
                     color = TextGrey
                 )
             }
+        }
+    }
+}
+
+/**
+ * "New playlist" header button.
+ *
+ * Same offset-shadow / 3px border / 16dp corner anatomy as [DownloadsIconButton], so the
+ * header reads as one row of controls rather than two competing styles.
+ */
+@Composable
+private fun NewPlaylistButton(onClick: () -> Unit) {
+    Box {
+        Box(
+            modifier = Modifier
+                .offset(x = 4.dp, y = 4.dp)
+                .size(BUTTON_SIZE)
+                .clip(RoundedCornerShape(16.dp))
+                .background(MaterialTheme.colorScheme.outline)
+        )
+        Box(
+            modifier = Modifier
+                .size(BUTTON_SIZE)
+                .clip(RoundedCornerShape(16.dp))
+                .background(SunnyYellow)
+                .border(3.dp, BorderBlack, RoundedCornerShape(16.dp))
+                .clickable(onClick = onClick),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                Icons.Filled.Add,
+                contentDescription = "New playlist",
+                tint = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.size(26.dp)
+            )
         }
     }
 }
