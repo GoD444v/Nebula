@@ -98,18 +98,33 @@ class PlaylistsViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * Moves the song at index [from] to index [to] in [playlistId].
+     * Moves the song shown at row [from] to row [to] in [playlistId].
      *
-     * The bounds check reads the current order first. It is not redundant: `moveSong`'s
-     * `BETWEEN` window is computed from the raw indexes, so an out-of-range `from` would
-     * otherwise shift every row instead of doing nothing. One extra read to keep a bad
-     * index harmless.
+     * The row indexes are translated to stored `position` values before touching the DAO,
+     * and that translation is the whole point of this function. `PlaylistDao.moveSong`
+     * shifts on `position`, but every caller — the playlist screen, the drag handle, a
+     * future gesture — thinks in row indexes. Those are the same number only while the
+     * positions are exactly 0..n-1.
+     *
+     * They are not guaranteed to be. Anything that removes a song without renumbering
+     * leaves a permanent hole (`DownloadedPlaylistSync.reconcile` used to do exactly
+     * that), and installs that already did have holes before this translation existed
+     * still have them. With a hole the two numbering schemes diverge, `moveSong`'s
+     * `BETWEEN MIN(..) AND MAX(..)` window covers the wrong rows, and the reorder
+     * silently does nothing — which reads to the user as "the order reset itself".
+     * Demonstrated by `ReorderGapDiagnosticTest`, which failed with the order unchanged.
+     *
+     * Reading the rows is therefore load-bearing, not a defensive extra: it is what makes
+     * the two schemes line up. It also bounds the indexes, since a row that does not
+     * exist can have no position.
      */
     fun reorder(playlistId: Long, from: Int, to: Int) = viewModelScope.launch {
         if (from == to) return@launch
-        val size = dao.observeSongs(playlistId).first().size
-        if (from !in 0 until size || to !in 0 until size) return@launch
-        dao.moveSong(playlistId, from, to)
+        val rows = dao.observeSongs(playlistId).first()
+        val fromPosition = rows.getOrNull(from)?.position ?: return@launch
+        val toPosition = rows.getOrNull(to)?.position ?: return@launch
+        if (fromPosition == toPosition) return@launch
+        dao.moveSong(playlistId, fromPosition, toPosition)
     }
 
     /**

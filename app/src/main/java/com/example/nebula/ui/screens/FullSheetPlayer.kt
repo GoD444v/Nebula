@@ -1,5 +1,6 @@
 package com.example.nebula.ui.screens
 
+import android.content.Intent
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -26,6 +27,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.QueueMusic
@@ -50,6 +52,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.layout.ContentScale
@@ -62,6 +65,7 @@ import androidx.media3.exoplayer.offline.Download
 import coil3.compose.SubcomposeAsyncImage
 import com.example.nebula.data.download.NebulaDownloads
 import com.example.nebula.ui.components.ImmersiveMode
+import com.example.nebula.ui.components.SongMenuSheet
 import com.example.nebula.ui.theme.BorderBlack
 import com.example.nebula.ui.theme.MintTeal
 import com.example.nebula.ui.theme.NebulaTheme
@@ -74,6 +78,8 @@ import kotlinx.coroutines.flow.map
 @Composable
 fun FullSheetPlayer(vm: PlayerViewModel, onClose: () -> Unit) {
     var showQueue by remember { mutableStateOf(false) }
+    var showSongMenu by remember { mutableStateOf(false) }
+    val context = LocalContext.current
     var showLyrics by remember { mutableStateOf(false) }
     var showLyricsFull by remember { mutableStateOf(false) }
 
@@ -89,8 +95,25 @@ fun FullSheetPlayer(vm: PlayerViewModel, onClose: () -> Unit) {
             .padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
             ChunkyBtn(Icons.Filled.KeyboardArrowDown, "Close", MaterialTheme.colorScheme.surface, 48.dp, onClose)
+
+            // The same overflow the search rows and playlist rows use. It was missing
+            // here, which left the playing song as the one song with no route to Share,
+            // Add to playlist or Start radio. Every one of those already works against
+            // PlayerViewModel inside SongMenuSheet, so this is the same wiring, not a
+            // second menu with its own behaviour.
+            if (vm.currentSong() != null) {
+                ChunkyBtn(
+                    Icons.Filled.MoreVert, "More options",
+                    MaterialTheme.colorScheme.surface, 48.dp,
+                    onClick = { showSongMenu = true }
+                )
+            }
         }
 
         Spacer(modifier = Modifier.height(12.dp))
@@ -317,6 +340,39 @@ fun FullSheetPlayer(vm: PlayerViewModel, onClose: () -> Unit) {
                     color = MaterialTheme.colorScheme.onSurface
                 )
             }
+        }
+
+        // The per-song overflow for whatever is playing. Reads currentSong() again here
+        // rather than caching it in a variable above, so the sheet and the header button
+        // can never disagree about which song is playing.
+        val menuSong = vm.currentSong()
+        if (showSongMenu && menuSong != null) {
+            SongMenuSheet(
+                song = menuSong,
+                isDownloaded = NebulaDownloads.isDownloaded(menuSong.videoId),
+                onDismiss = { showSongMenu = false },
+                onPlayNext = { vm.playNext(menuSong); showSongMenu = false },
+                onAddToQueue = { vm.addToQueue(menuSong); showSongMenu = false },
+                // Already playing, so a radio from here would only replace it with
+                // something else. Left off rather than wired to a surprising action.
+                onShare = {
+                    showSongMenu = false
+                    context.startActivity(
+                        Intent.createChooser(
+                            Intent(Intent.ACTION_SEND).apply {
+                                type = "text/plain"
+                                putExtra(
+                                    Intent.EXTRA_TEXT,
+                                    "https://music.youtube.com/watch?v=${menuSong.videoId}"
+                                )
+                            },
+                            null
+                        )
+                    )
+                },
+                onDownload = { NebulaDownloads.enqueue(menuSong); showSongMenu = false },
+                onRemoveDownload = { NebulaDownloads.remove(menuSong.videoId); showSongMenu = false }
+            )
         }
 
         // Fullscreen lyrics: edge-to-edge dialog (under the status bar too),

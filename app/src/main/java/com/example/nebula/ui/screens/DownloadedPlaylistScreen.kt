@@ -19,13 +19,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
-import sh.calvin.reorderable.ReorderableItem
-import sh.calvin.reorderable.rememberReorderableLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowDownward
-import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -399,7 +396,6 @@ private fun DownloadedPlaylistContent(
                     val asSong = song
                     DownloadedSongRow(
                         song = asSong,
-                        position = index,
                         canMoveUp = canReorder && index > 0,
                         canMoveDown = canReorder && index < sorted.lastIndex,
                         onMoveUp = { onMove(index, index - 1) },
@@ -424,12 +420,24 @@ private fun DownloadedPlaylistContent(
     }
 }
 
+/**
+ * One song's artwork in a row.
+ *
+ * `contentScale = Crop` is load-bearing, not decoration. Coil's default is `Fit`, which
+ * fits the WHOLE image inside the square and therefore letterboxes any non-square
+ * thumbnail — bars of empty background top and bottom, which reads as "the artwork does
+ * not fit". Search results already used Crop, which is why the same song looked correct
+ * there and wrong here. It is not a per-song problem: every non-square cover is affected,
+ * and square ones simply hide it.
+ */
 @Composable
 private fun CoverArt(thumbnailUrl: String?, size: androidx.compose.ui.unit.Dp) {
     if (thumbnailUrl != null) {
         AsyncImage(
             model = thumbnailUrl,
             contentDescription = null,
+            // Square box, filled. See the note above.
+            contentScale = androidx.compose.ui.layout.ContentScale.Crop,
             modifier = Modifier
                 .size(size)
                 .clip(RoundedCornerShape(20.dp))
@@ -457,7 +465,6 @@ private fun CoverArt(thumbnailUrl: String?, size: androidx.compose.ui.unit.Dp) {
 @Composable
 private fun DownloadedSongRow(
     song: SearchResult,
-    position: Int,
     canMoveUp: Boolean,
     canMoveDown: Boolean,
     onMoveUp: () -> Unit,
@@ -488,14 +495,10 @@ private fun DownloadedSongRow(
                 .padding(horizontal = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(
-                "${position + 1}",
-                fontWeight = FontWeight.Black,
-                fontSize = 12.sp,
-                color = TextGrey,
-                modifier = Modifier.width(22.dp)
-            )
-
+            // No track number. It was read as a fixed ordinal, so after a reorder the numbers
+            // disagreed with the arrows the user had just pressed and it looked like the
+            // list had reverted. The row order is the order; a number restating it adds
+            // a second, contradicting one.
             CoverArt(thumbnailUrl = song.thumbnailUrl, size = 44.dp)
 
             Spacer(modifier = Modifier.width(12.dp))

@@ -257,7 +257,11 @@ class MainActivity : ComponentActivity() {
                                         )
                                         "downloads" -> DownloadQueueScreen(
                                             onBack = { screen = "playlists" },
-                                            playlistsVm = playlistsVm
+                                            playlistsVm = playlistsVm,
+                                            // So the row overflow can reach queue actions. The
+                                            // queue's own DownloadViewModel deliberately knows
+                                            // nothing about playback.
+                                            playerVm = vm
                                         )
                                         else        -> SettingsScreen(onCustomizeTabs = { showTabCustomizer = true })
                                     }

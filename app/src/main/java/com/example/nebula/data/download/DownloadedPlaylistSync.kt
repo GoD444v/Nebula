@@ -66,7 +66,22 @@ class DownloadedPlaylistSync(private val dao: PlaylistDao) {
         val current = dao.observeSongs(id).first()
         if (current.none { it.videoId == videoId }) return
         dao.removeSong(id, videoId)
-        current.filter { it.videoId != videoId }.forEachIndexed { index, song ->
+        renumber(id)
+    }
+
+    /**
+     * Rewrites positions to 0..n-1 in the current order.
+     *
+     * Every path that removes a row must call this, because a hole in the positions is
+     * not cosmetic: `PlaylistDao.moveSong` takes position VALUES, while the screen hands
+     * it row INDEXES. The two agree only while positions are dense. With a hole they
+     * diverge, the `BETWEEN MIN(..) AND MAX(..)` window covers the wrong rows, and the
+     * reorder becomes a silent no-op — the list looks like it reset itself. Proven by
+     * `ReorderGapDiagnosticTest.reorderMovesTheRightRowsWhenPositionsHaveAHole`, which
+     * failed with the order unchanged before this call existed on the prune path.
+     */
+    private suspend fun renumber(id: Long) {
+        dao.observeSongs(id).first().forEachIndexed { index, song ->
             if (song.position != index) dao.updatePosition(id, song.videoId, index)
         }
     }
@@ -98,6 +113,9 @@ class DownloadedPlaylistSync(private val dao: PlaylistDao) {
             }
         if (missing.isNotEmpty()) dao.insertSongs(missing)
         dao.deleteSongsNotIn(indexed.map { it.videoId }, id)
+        // The prune above can leave a hole in the positions. See [renumber] for why that
+        // is not cosmetic.
+        renumber(id)
     }
 
     companion object {

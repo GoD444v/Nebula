@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.PlaylistAdd
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -61,7 +62,10 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.nebula.ui.components.ChunkyAction
 import com.example.nebula.ui.components.ChunkyWindow
 import com.example.nebula.ui.theme.BorderBlack
+import com.example.nebula.data.download.NebulaDownloads
 import com.example.nebula.ui.components.AddToPlaylistDialog
+import com.example.nebula.ui.components.SongMenuSheet
+import com.example.nebula.ui.screens.shareSong
 import com.example.nebula.ui.theme.NebulaTheme
 import com.example.nebula.ui.theme.TextGrey
 import com.example.nebula.viewmodel.AddToPlaylistResult
@@ -69,6 +73,7 @@ import com.example.nebula.viewmodel.DownloadItem
 import com.example.nebula.viewmodel.DownloadStatus
 import com.example.nebula.viewmodel.DownloadViewModel
 import com.example.nebula.viewmodel.PlaylistsViewModel
+import com.example.nebula.viewmodel.PlayerViewModel
 import com.example.nebula.viewmodel.previewSong
 import kotlinx.coroutines.launch
 
@@ -84,7 +89,8 @@ private const val CLEAR_ALL = "*"
 @Composable
 fun DownloadQueueScreen(
     onBack: () -> Unit,
-    playlistsVm: PlaylistsViewModel? = null
+    playlistsVm: PlaylistsViewModel? = null,
+    playerVm: PlayerViewModel? = null
 ) {
     val vm: DownloadViewModel = viewModel()
     val downloads by vm.downloads.collectAsState()
@@ -102,6 +108,13 @@ fun DownloadQueueScreen(
         downloads.firstOrNull { it.videoId == addingVideoId }?.song
     }
 
+    // Which row's overflow is open. One at a time: the sheet closes before the playlist
+    // picker opens, so nothing stacks.
+    var menuVideoId by remember { mutableStateOf<String?>(null) }
+    val menuSong = remember(menuVideoId, downloads) {
+        downloads.firstOrNull { it.videoId == menuVideoId }?.song
+    }
+
     DownloadQueueContent(
         downloads = downloads,
         isPaused = isPaused,
@@ -109,8 +122,30 @@ fun DownloadQueueScreen(
         onTogglePause = { if (isPaused) vm.resumeAll() else vm.pauseAll() },
         onRemove = vm::remove,
         onRemoveAll = vm::removeAll,
-        onRequestAddToPlaylist = { addingVideoId = it }
+        onRequestAddToPlaylist = { menuVideoId = it }
     )
+
+    if (menuSong != null) {
+        // The same sheet search results and playlist rows use. Download is omitted: a row
+        // here is already a download, and the sheet's Download/Remove label is decided by
+        // completion state, which would read wrong for a queued or failed one. Remove
+        // stays the visible button below, where the confirmation window is.
+        SongMenuSheet(
+            song = menuSong,
+            isDownloaded = NebulaDownloads.isDownloaded(menuSong.videoId),
+            onDismiss = { menuVideoId = null },
+            onPlayNext = { playerVm?.playNext(menuSong); menuVideoId = null },
+            onAddToQueue = { playerVm?.addToQueue(menuSong); menuVideoId = null },
+            onAddToPlaylist = {
+                menuVideoId = null
+                addingVideoId = menuSong.videoId
+            },
+            onShare = {
+                menuVideoId = null
+                shareSong(context, menuSong)
+            }
+        )
+    }
 
     if (addingSong != null && playlistsVm != null) {
         AddToPlaylistDialog(
@@ -350,9 +385,15 @@ private fun DownloadRow(
                 // SearchResult, and a request from before SongCodec carries a bare title
                 // with no artist or artwork — a row built from that would insert a playlist
                 // entry that can never be completed later.
+                //
+                // This replaced a dedicated "Add to playlist" button rather than sitting
+                // beside it: the sheet already offers that action, so keeping both meant
+                // two controls for one job. Remove stays a visible button on purpose —
+                // it is destructive, and the confirmation window lives on this screen,
+                // not in the sheet.
                 if (item.song != null) {
                     ChunkyIconBtn(
-                        Icons.Filled.PlaylistAdd, "Add to playlist",
+                        Icons.Filled.MoreVert, "More options",
                         MaterialTheme.colorScheme.secondary, 38.dp, 12.dp
                     ) { onRequestAddToPlaylist(item.videoId) }
                 }
