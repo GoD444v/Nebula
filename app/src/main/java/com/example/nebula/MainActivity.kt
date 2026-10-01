@@ -52,6 +52,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -73,6 +74,7 @@ import com.example.nebula.ui.components.MiniPlayer
 import com.example.nebula.ui.screens.AlbumDetailScreen
 import com.example.nebula.ui.screens.FullSheetPlayer
 import com.example.nebula.ui.screens.download.DownloadQueueScreen
+import com.example.nebula.ui.screens.DownloadedPlaylistScreen
 import com.example.nebula.ui.screens.HomeScreen
 import com.example.nebula.ui.screens.PlaylistsScreen
 import com.example.nebula.ui.screens.SearchScreen
@@ -84,6 +86,7 @@ import com.example.nebula.ui.theme.NebulaTheme
 import com.example.nebula.ui.theme.TextBlack
 import com.example.nebula.ui.theme.TextWhite
 import com.example.nebula.ui.theme.ThemeStore
+import com.example.nebula.viewmodel.PlaylistsViewModel
 import com.example.nebula.viewmodel.PlayerViewModel
 
 // DataStore instance for navigation tab order — persists across app restarts
@@ -105,6 +108,10 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             val scope = rememberCoroutineScope()
+            // Same instance PlaylistsScreen resolves internally: both `viewModel()` calls
+            // land in the Activity's ViewModelStore, so the list and the detail screen
+            // share one selection instead of each holding its own.
+            val playlistsVm: PlaylistsViewModel = viewModel()
             val context = androidx.compose.ui.platform.LocalContext.current
             var screen by remember { mutableStateOf("home") }
             var showSheet by remember { mutableStateOf(false) }
@@ -116,6 +123,10 @@ class MainActivity : ComponentActivity() {
             // Album/playlist detail page — lives inside the Home tab
             var detailId by remember { mutableStateOf<String?>(null) }
             var detailTitle by remember { mutableStateOf("") }
+            // Which local playlist the detail screen is showing. Separate from detailId,
+            // which is a YouTube browseId for AlbumDetailScreen — the two id spaces are
+            // unrelated, so sharing one variable would invite a Long/String mixup.
+            var playlistId by remember { mutableStateOf<Long?>(null) }
 
             // Read saved tab order from DataStore on first composition
             LaunchedEffect(Unit) {
@@ -159,9 +170,12 @@ class MainActivity : ComponentActivity() {
             // There was NO BackHandler, so system back finished the activity and dumped
             // the user on the launcher. Back now: close the player sheet first, then walk
             // any tab back to Home, then close an open detail page. Only plain Home exits.
-            BackHandler(enabled = showSheet || screen != "home" || detailId != null) {
+            BackHandler(enabled = showSheet || screen != "home" || detailId != null || playlistId != null) {
                 when {
                     showSheet -> showSheet = false
+                    // A playlist detail screen is reached from the Playlists tab, so back
+                    // returns there rather than to Home.
+                    screen == "playlist" -> { playlistId = null; screen = "playlists" }
                     // Downloads is entered from Playlists, so back goes there.
                     screen == "downloads" -> screen = "playlists"
                     screen != "home" -> screen = "home"
@@ -185,7 +199,7 @@ class MainActivity : ComponentActivity() {
                                 AnimatedContent(
                                     targetState = screen,
                                     transitionSpec = {
-                                        val order = listOf("home", "search", "playlists", "settings")
+                                        val order = listOf("home", "search", "playlists", "playlist", "downloads", "settings")
                                         val dir = if (order.indexOf(targetState) >= order.indexOf(initialState)) 1 else -1
                                         (slideInHorizontally(animationSpec = tween(300, easing = EaseOutCubic)) { it * dir / 2 } +
                                             fadeIn(animationSpec = tween(200))) togetherWith
@@ -217,7 +231,27 @@ class MainActivity : ComponentActivity() {
                                         "search"    -> SearchScreen(vm, onPlayDone = { screen = "home" })
                                         // Downloads is reached from the Playlists
                                         // card, not the nav bar — the route stays.
-                                        "playlists" -> PlaylistsScreen(onOpenDownloads = { screen = "downloads" })
+                                        "playlists" -> PlaylistsScreen(
+                                            onOpenDownloads = { screen = "downloads" },
+                                            onOpenPlaylist = { id ->
+                                                playlistId = id
+                                                screen = "playlist"
+                                            },
+                                            onPlayPlaylist = { id ->
+                                                // Queues the whole playlist without navigating.
+                                                // playAll needs the songs up front, and
+                                                // queueItems is a suspend read.
+                                                scope.launch {
+                                                    vm.playAll(playlistsVm.queueItems(id))
+                                                }
+                                            }
+                                        )
+                                        "playlist" -> DownloadedPlaylistScreen(
+                                            vm = playlistsVm,
+                                            playerVm = vm,
+                                            onBack = { playlistId = null; screen = "playlists" },
+                                            playlistId = playlistId
+                                        )
                                         "downloads" -> DownloadQueueScreen(onBack = { screen = "playlists" })
                                         else        -> SettingsScreen(onCustomizeTabs = { showTabCustomizer = true })
                                     }

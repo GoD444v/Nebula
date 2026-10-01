@@ -40,6 +40,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.media3.common.Player
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -81,8 +82,15 @@ import com.example.nebula.viewmodel.PlayerViewModel
 fun DownloadedPlaylistScreen(
     vm: PlaylistsViewModel,
     playerVm: PlayerViewModel,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    playlistId: Long? = null
 ) {
+    // Navigating in from the list passes the id; tests seed the selection directly and
+    // pass nothing, so a null here must not clear an already-selected playlist.
+    LaunchedEffect(playlistId) {
+        if (playlistId != null) vm.select(playlistId)
+    }
+
     val songs by vm.songs.collectAsState()
     val selectedId by vm.selectedPlaylistId.collectAsState()
     val playlists by vm.playlists.collectAsState()

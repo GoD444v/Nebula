@@ -60,9 +60,22 @@ import com.example.nebula.viewmodel.activeDownloadCount
 private val tileAccents = listOf(NeonPink, SunnyYellow, MintTeal)
 
 @Composable
+/**
+ * The playlist list.
+ *
+ * No card offers Delete or Rename. The built-in Downloaded playlist must not be
+ * deletable at all, and `PlaylistDao.delete` enforces that in SQL with
+ * `AND isSystem = 0` — so a Delete button on a system card would look enabled and then
+ * silently do nothing. Omitting the control everywhere is the consistent answer, and it
+ * spares the UI a branch on `isSystem` that the DAO already guards.
+ *
+ * [onOpenPlaylist] opens a playlist's detail screen; [onPlayPlaylist] queues it whole.
+ */
 fun PlaylistsScreen(
     vm: PlaylistsViewModel = viewModel(),
-    onOpenDownloads: () -> Unit = {}
+    onOpenDownloads: () -> Unit = {},
+    onOpenPlaylist: (Long) -> Unit = {},
+    onPlayPlaylist: (Long) -> Unit = {}
 ) {
     val playlists by vm.playlists.collectAsState()
     val downloadsVm: DownloadViewModel = viewModel()
@@ -158,10 +171,8 @@ fun PlaylistsScreen(
                     PlaylistCard(
                         playlist = playlist,
                         accent = tileAccents[index % tileAccents.size],
-                        onClick = { /* Detail screen lands in Plan B. */
-                        },
-                        onPlay = { /* Queue entry point lands in Plan B. */
-                        }
+                        onClick = { onOpenPlaylist(playlist.playlist.id) },
+                        onPlay = { onPlayPlaylist(playlist.playlist.id) }
                     )
                 }
             }

@@ -105,6 +105,17 @@ class PlaylistsViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
+     * The playlist's songs as queue items, in order, for [PlayerViewModel.playAll].
+     *
+     * A suspend read rather than an exposed flow because the caller needs the whole list
+     * at once, to hand over as a single queue, not to render incrementally.
+     */
+    suspend fun queueItems(playlistId: Long): List<SearchResult> =
+        dao.observeSongs(playlistId).first().map {
+            SearchResult(it.videoId, it.title, it.artist, it.thumbnailUrl.orEmpty())
+        }
+
+    /**
      * Appends [results] to the playlist and returns how many were genuinely new.
      * A song already present is skipped by the composite primary key, so the count
      * lets the caller say "already in playlist" instead of appearing to do nothing.
