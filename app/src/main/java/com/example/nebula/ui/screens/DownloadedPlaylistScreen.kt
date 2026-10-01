@@ -28,6 +28,8 @@ import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.RadioButtonChecked
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
@@ -61,8 +63,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import com.example.nebula.data.db.entities.PlaylistSongEntity
+import com.example.nebula.data.download.NebulaDownloads
 import com.example.nebula.data.models.SearchResult
 import com.example.nebula.ui.components.SongInfoDialog
+import com.example.nebula.ui.components.AddToPlaylistDialog
+import com.example.nebula.ui.components.SongMenuSheet
+import kotlinx.coroutines.launch
 import com.example.nebula.ui.theme.BorderBlack
 import com.example.nebula.ui.theme.MintTeal
 import com.example.nebula.ui.theme.SunnyYellow
@@ -100,6 +106,8 @@ fun DownloadedPlaylistScreen(
         if (playlistId != null) vm.select(playlistId)
     }
 
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
     val songs by vm.songs.collectAsState()
     val selectedId by vm.selectedPlaylistId.collectAsState()
     val playlists by vm.playlists.collectAsState()
@@ -110,6 +118,7 @@ fun DownloadedPlaylistScreen(
         ?: DownloadedFallbackName
     val items = songs.map { it.toSearchResult() }
     var infoFor by remember { mutableStateOf<SearchResult?>(null) }
+    var addToPlaylistFor by remember { mutableStateOf<SearchResult?>(null) }
 
     DownloadedPlaylistContent(
         name = name,
@@ -135,12 +144,47 @@ fun DownloadedPlaylistScreen(
     )
 
     infoFor?.let { song ->
-        SongInfoDialog(
-            title = song.title,
-            artist = song.artist,
-            artworkUrl = song.thumbnailUrl,
-            onDismiss = { infoFor = null }
+        // Same sheet the search rows use, so a song's menu behaves identically wherever
+        // it appears. Song info is one of its items rather than a separate button.
+        SongMenuSheet(
+            song = song,
+            isDownloaded = NebulaDownloads.isDownloaded(song.videoId),
+            onDismiss = { infoFor = null },
+            onPlayNext = { infoFor?.let(playerVm::playNext); infoFor = null },
+            onAddToQueue = { infoFor?.let(playerVm::addToQueue); infoFor = null },
+            onStartRadio = { infoFor?.let(playerVm::startRadioFrom); infoFor = null },
+            onAddToPlaylist = { addToPlaylistFor = infoFor; infoFor = null },
+            onShare = {
+                infoFor?.let { s -> shareSong(context, s) }
+                infoFor = null
+            },
+            onDownload = { infoFor?.let(NebulaDownloads::enqueue); infoFor = null },
+            onRemoveDownload = { infoFor?.let { NebulaDownloads.remove(it.videoId) }; infoFor = null },
+            onShowInfo = { infoFor = null }
         )
+    }
+
+    addToPlaylistFor?.let { song ->
+        playlists?.let { p ->
+            AddToPlaylistDialog(
+                songs = listOf(song),
+                playlists = p,
+                onAddToExisting = { id ->
+                    scope.launch {
+                        val r = vm.addToPlaylist(id, listOf(song))
+                        addToPlaylistFor = null
+                        toastResult(context, r)
+                    }
+                },
+                onCreateWith = { n ->
+                    scope.launch {
+                        vm.createWithSongs(n, listOf(song))
+                        addToPlaylistFor = null
+                    }
+                },
+                onDismiss = { addToPlaylistFor = null }
+            )
+        } ?: run { addToPlaylistFor = null }
     }
 }
 
@@ -265,8 +309,17 @@ private fun DownloadedPlaylistContent(
 
         Spacer(modifier = Modifier.height(16.dp))
 
+        // Artwork on the left with the name set over it, text and controls on the right —
+        // the header shape the reference design uses. The artwork is still the first
+        // song's cover, which is deliberate: for the Downloaded playlist there is no
+        // playlist-level image to show, and a mosaic would be four unrelated square
+        // thumbnails rather than one recognisable cover.
         Row(verticalAlignment = Alignment.CenterVertically) {
-            CoverArt(thumbnailUrl = songs.firstOrNull()?.thumbnailUrl, size = 96.dp)
+            PlaylistCover(
+                thumbnailUrl = songs.firstOrNull()?.thumbnailUrl,
+                title = name,
+                size = 104.dp
+            )
 
             Spacer(modifier = Modifier.width(16.dp))
 
@@ -274,41 +327,37 @@ private fun DownloadedPlaylistContent(
                 Text(
                     name,
                     fontWeight = FontWeight.Black,
-                    fontSize = 22.sp,
+                    fontSize = 20.sp,
+                    maxLines = 2,
                     color = MaterialTheme.colorScheme.onSurface
                 )
+                Spacer(modifier = Modifier.height(2.dp))
                 Text(
-                    "${songs.size} tracks",
-                    fontSize = 13.sp,
+                    "Playlist · ${songs.size} tracks",
+                    fontSize = 12.sp,
                     color = TextGrey
                 )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    VoxPlayAllButton(onClick = onPlay)
+                    ChunkyIconButton(
+                        icon = Icons.Filled.Shuffle,
+                        description = "Shuffle",
+                        tint = if (shuffleOn) SunnyYellow else MaterialTheme.colorScheme.surface,
+                        size = 44.dp,
+                        onClick = onShuffle
+                    )
+                    ChunkyIconButton(
+                        icon = Icons.Filled.Repeat,
+                        description = "Repeat $repeatMode",
+                        tint = MaterialTheme.colorScheme.surface,
+                        size = 44.dp,
+                        onClick = onRepeat
+                    )
+                }
             }
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            ChunkyIconButton(
-                icon = Icons.Filled.PlayArrow,
-                description = "Play all",
-                tint = MaterialTheme.colorScheme.primary,
-                size = 52.dp,
-                onClick = onPlay
-            )
-            ChunkyIconButton(
-                icon = Icons.Filled.Shuffle,
-                description = "Shuffle",
-                tint = if (shuffleOn) SunnyYellow else MaterialTheme.colorScheme.surface,
-                size = 52.dp,
-                onClick = onShuffle
-            )
-            ChunkyIconButton(
-                icon = Icons.Filled.Repeat,
-                description = "Repeat $repeatMode",
-                tint = MaterialTheme.colorScheme.surface,
-                size = 52.dp,
-                onClick = onRepeat
-            )
         }
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -334,16 +383,12 @@ private fun DownloadedPlaylistContent(
                 sortSongs(songs.map { it.toSearchResult() }, sortType, sortDescending)
             }
 
-            // Reordering only makes sense while showing the manual order. Under Name or
-            // Artist the visible row order is not the stored order, so a drag index would
-            // refer to the wrong rows and "move" would silently rewrite someone else's
-            // position. Hidden rather than disabled, so there is no inert handle to tap.
+            // Reorder is arrows only. The drag gesture was tried and could not be verified
+            // off-device, and a gesture that silently does nothing is worse than a
+            // visible button. Arrows hide when reordering makes no sense: under Name or
+            // Artist the visible order is not the stored order, so an arrow index would
+            // refer to the wrong rows.
             val canReorder = sortType == PlaylistSortType.CUSTOM
-            val reorderableState = rememberReorderableLazyListState(lazyListState = listState) { from, to ->
-                // Indices come from `sorted`, which IS the manual list when canReorder is
-                // true — the two are the same list in that case by definition.
-                onMove(from.index, to.index)
-            }
 
             LazyColumn(
                 state = listState,
@@ -352,21 +397,16 @@ private fun DownloadedPlaylistContent(
             ) {
                 itemsIndexed(sorted, key = { _, s -> s.videoId }) { index, song ->
                     val asSong = song
-                    ReorderableItem(state = reorderableState, key = song.videoId) { itemScope ->
-                        DownloadedSongRow(
-                            song = asSong,
-                            position = index,
-                            onPlay = { onPlaySong(asSong) },
-                            onShowInfo = { onShowInfo(asSong) },
-                            // Applied to the handle only, so a long press anywhere else on
-                            // the row still reaches the row's own tap and info button.
-                            dragModifier = if (canReorder) {
-                                with(itemScope) { Modifier.longPressDraggableHandle() }
-                            } else {
-                                Modifier
-                            }
-                        )
-                    }
+                    DownloadedSongRow(
+                        song = asSong,
+                        position = index,
+                        canMoveUp = canReorder && index > 0,
+                        canMoveDown = canReorder && index < sorted.lastIndex,
+                        onMoveUp = { onMove(index, index - 1) },
+                        onMoveDown = { onMove(index, index + 1) },
+                        onPlay = { onPlaySong(asSong) },
+                        onShowInfo = { onShowInfo(asSong) }
+                    )
                 }
             }
         }
@@ -418,10 +458,12 @@ private fun CoverArt(thumbnailUrl: String?, size: androidx.compose.ui.unit.Dp) {
 private fun DownloadedSongRow(
     song: SearchResult,
     position: Int,
+    canMoveUp: Boolean,
+    canMoveDown: Boolean,
+    onMoveUp: () -> Unit,
+    onMoveDown: () -> Unit,
     onPlay: () -> Unit,
-    onShowInfo: () -> Unit,
-    /** Drag modifier from the reorder library; [Modifier] when reordering is off. */
-    dragModifier: Modifier = Modifier
+    onShowInfo: () -> Unit
 ) {
     Box {
         Box(
@@ -476,23 +518,166 @@ private fun DownloadedSongRow(
 
             IconButton(onClick = onShowInfo) {
                 Icon(
-                    Icons.Filled.Info,
-                    contentDescription = "Song info for ${song.title}",
+                    Icons.Filled.MoreVert,
+                    contentDescription = "More options for ${song.title}",
                     tint = MaterialTheme.colorScheme.onSurface
                 )
             }
 
-            // Drag handle. Present only in Custom order, matching the reference
-            // implementation — see canReorder above.
-            if (dragModifier != Modifier) {
-                IconButton(onClick = {}, modifier = dragModifier) {
-                    Icon(
-                        Icons.Filled.DragHandle,
-                        contentDescription = "Reorder ${song.title}",
-                        tint = MaterialTheme.colorScheme.onSurface
-                    )
-                }
+            // Vox-style reorder arrows: offset shadow behind a bordered chip, the same
+            // primitive as the header buttons, so the row does not sprout a second
+            // visual language. Hidden rather than disabled at the ends of the list — an
+            // arrow that cannot do anything reads as broken.
+            if (canMoveUp) {
+                VoxArrow(
+                    icon = Icons.Filled.KeyboardArrowUp,
+                    description = "Move ${song.title} up",
+                    onClick = onMoveUp
+                )
             }
+            if (canMoveDown) {
+                VoxArrow(
+                    icon = Icons.Filled.KeyboardArrowDown,
+                    description = "Move ${song.title} down",
+                    onClick = onMoveDown
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Playlist cover: artwork with the name set over its lower edge.
+ *
+ * A scrim behind the text, because the artwork is whatever the first song happens to be
+ * and a dark photo under white text is unreadable without one.
+ */
+@Composable
+private fun PlaylistCover(thumbnailUrl: String?, title: String, size: androidx.compose.ui.unit.Dp) {
+    Box(
+        modifier = Modifier
+            .size(size)
+            .clip(RoundedCornerShape(18.dp))
+            .background(MintTeal)
+            .border(3.dp, BorderBlack, RoundedCornerShape(18.dp))
+    ) {
+        if (thumbnailUrl != null) {
+            AsyncImage(
+                model = thumbnailUrl,
+                contentDescription = null,
+                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+        } else {
+            Icon(
+                Icons.Filled.QueueMusic,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .size(40.dp)
+            )
+        }
+
+        // Scrim: a vertical gradient, opaque enough at the bottom to carry white text.
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    androidx.compose.ui.graphics.Brush.verticalGradient(
+                        colors = listOf(
+                            androidx.compose.ui.graphics.Color.Transparent,
+                            androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.75f)
+                        )
+                    )
+                )
+        )
+
+        Text(
+            title,
+            fontWeight = FontWeight.Black,
+            fontSize = 13.sp,
+            color = androidx.compose.ui.graphics.Color.White,
+            maxLines = 2,
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .padding(horizontal = 8.dp, vertical = 7.dp)
+        )
+    }
+}
+
+/** Vox "PLAY ALL" pill: filled, black-bordered, offset shadow. */
+@Composable
+private fun VoxPlayAllButton(onClick: () -> Unit) {
+    Box(modifier = Modifier.height(44.dp)) {
+        Box(
+            modifier = Modifier
+                .offset(x = 4.dp, y = 4.dp)
+                .clip(RoundedCornerShape(14.dp))
+                .background(MaterialTheme.colorScheme.outline)
+        )
+        Row(
+            modifier = Modifier
+                .clip(RoundedCornerShape(14.dp))
+                .background(SunnyYellow)
+                .border(3.dp, BorderBlack, RoundedCornerShape(14.dp))
+                .clickable(onClick = onClick)
+                .padding(horizontal = 14.dp, vertical = 9.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                Icons.Filled.PlayArrow,
+                contentDescription = null,
+                tint = BorderBlack,
+                modifier = Modifier.size(18.dp)
+            )
+            Spacer(modifier = Modifier.width(6.dp))
+            Text(
+                "PLAY ALL",
+                fontWeight = FontWeight.Black,
+                fontSize = 12.sp,
+                color = BorderBlack
+            )
+        }
+    }
+}
+
+/**
+ * Small Vox-style arrow chip: offset shadow behind a 3px-bordered box.
+ *
+ * Matches [ChunkyIconButton] at a smaller scale so the song row's reorder controls read
+ * as part of the same design language as the header buttons.
+ */
+@Composable
+private fun VoxArrow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    description: String,
+    onClick: () -> Unit
+) {
+    val size = 30.dp
+    Box(modifier = Modifier.padding(start = 2.dp)) {
+        Box(
+            modifier = Modifier
+                .offset(x = 3.dp, y = 3.dp)
+                .size(size)
+                .clip(RoundedCornerShape(10.dp))
+                .background(MaterialTheme.colorScheme.outline)
+        )
+        Box(
+            modifier = Modifier
+                .size(size)
+                .clip(RoundedCornerShape(10.dp))
+                .background(MaterialTheme.colorScheme.tertiary)
+                .border(2.5.dp, BorderBlack, RoundedCornerShape(10.dp))
+                .clickable(onClick = onClick),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                icon,
+                contentDescription = description,
+                tint = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.size(18.dp)
+            )
         }
     }
 }

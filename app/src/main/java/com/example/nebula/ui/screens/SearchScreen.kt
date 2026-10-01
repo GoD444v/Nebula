@@ -368,7 +368,7 @@ Box(
                     scope.launch {
                         val result = playlistsVm.addToPlaylist(id, listOf(toAdd))
                         addingToPlaylist = null
-                        toastAdded(context, result)
+                        toastResult(context, result)
                     }
                 },
                 onCreateWith = { name ->
@@ -394,7 +394,7 @@ Box(
 }
 
 /** Shares a plain text link, as the reference implementation does — no file attachment. */
-private fun shareSong(context: Context, song: SearchResult) {
+internal fun shareSong(context: Context, song: SearchResult) {
     val intent = Intent(Intent.ACTION_SEND).apply {
         type = "text/plain"
         putExtra(Intent.EXTRA_TEXT, "https://music.youtube.com/watch?v=${song.videoId}")
@@ -402,7 +402,7 @@ private fun shareSong(context: Context, song: SearchResult) {
     context.startActivity(Intent.createChooser(intent, null))
 }
 
-private fun toastAdded(context: Context, result: AddToPlaylistResult) {
+internal fun toastResult(context: Context, result: AddToPlaylistResult) {
     val message = when {
         result.added == 0 -> "Already in that playlist"
         result.duplicates == 0 -> "Added ${result.added}"

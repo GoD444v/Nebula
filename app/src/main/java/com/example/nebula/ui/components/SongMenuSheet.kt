@@ -85,7 +85,17 @@ fun SongMenuSheet(
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        // Pinned to `surface`, not the default `surfaceContainerLow`. The Vox palettes
+        // only define surface/background, so the default container resolved to a colour
+        // the palette never chose — and under Classic 80s Vox (a near-white surface) the
+        // default's dark container left the onSurface text unreadable. surface and
+        // onSurface are a designed pair in every palette, so pinning both is safe.
+        containerColor = MaterialTheme.colorScheme.surface,
+        contentColor = MaterialTheme.colorScheme.onSurface
+    ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -156,7 +166,9 @@ private fun SheetHeader(song: SearchResult) {
                 song.artist,
                 fontSize = 13.sp,
                 maxLines = 1,
-                color = TextGrey
+                // contentColor, not TextGrey: TextGrey is a fixed constant that does not
+                // invert with the palette, so on a dark sheet it disappeared.
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
             )
         }
     }
