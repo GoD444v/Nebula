@@ -61,8 +61,10 @@ class NebulaDownloadService : DownloadService(
         notMetRequirements: Int
     ): Notification {
         val label = if (downloads.size == 1) {
-            Util.fromUtf8Bytes(downloads[0].request.data)
-                .ifBlank { downloads[0].request.id }
+            // Goes through titleOf, not request.data directly: since Task 4 that field
+            // holds a SongCodec-encoded "title␟artist␟artwork" string, so reading it raw
+            // would put the whole triple into the notification.
+            NebulaDownloads.titleOf(downloads[0])
         } else {
             resources.getQuantityString(R.plurals.nebula_download_count, downloads.size, downloads.size)
         }
@@ -98,8 +100,7 @@ class NebulaDownloadService : DownloadService(
             finalException: Exception?
         ) {
             if (download.state != Download.STATE_FAILED) return
-            val label = Util.fromUtf8Bytes(download.request.data)
-                .ifBlank { download.request.id }
+            val label = NebulaDownloads.titleOf(download)
             val n = notificationHelper.buildDownloadFailedNotification(
                 this@NebulaDownloadService,
                 NOTIFICATION_ICON,
