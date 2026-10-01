@@ -265,6 +265,11 @@ Box(
                             // Home, an album or an artist. One song and nothing after it is
                             // the wrong outcome from a search list.
                             vm.startRadioFrom(r)
+                            // Then reveal the player. The MiniPlayer is the player surface
+                            // in this app — there is no player tab — so "open the player"
+                            // means opening the full-screen sheet, which the user asked
+                            // for after hitting play from a search result.
+                            onPlayDone()
                         }
                     )
                 }

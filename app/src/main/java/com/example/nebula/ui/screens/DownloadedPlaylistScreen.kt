@@ -19,16 +19,14 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.material.icons.filled.DragHandle
-import sh.calvin.reorderable.ReorderableItem
-import sh.calvin.reorderable.rememberReorderableLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.RadioButtonChecked
+import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.QueueMusic
 import androidx.compose.material.icons.filled.Repeat
@@ -122,8 +120,10 @@ fun DownloadedPlaylistScreen(
         // playlist queued behind it — the opposite of startRadioFrom, which is for tapping
         // a song in a search or browse list where the surrounding rows are not a set.
         onPlaySong = { song ->
-            val rest = items.filter { it.videoId != song.videoId }
-            playerVm.playAll(rest + song)
+            // Tapped song first, the rest behind it. Previously this was
+            // playAll(rest + song), which appended the tapped song to the tail and so
+            // played the FIRST song — tapping row 2 played row 1.
+            playerVm.playFromHere(song, items.filter { it.videoId != song.videoId })
         },
         onShowInfo = { song -> infoFor = song },
         onBack = onBack
@@ -173,6 +173,9 @@ private fun DownloadedPlaylistContent(
 ) {
     var showRename by remember { mutableStateOf(false) }
     var overflowOpen by remember { mutableStateOf(false) }
+    var sortOpen by remember { mutableStateOf(false) }
+    var sortType by remember { mutableStateOf(PlaylistSortType.CUSTOM) }
+    var sortDescending by remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
@@ -190,6 +193,50 @@ private fun DownloadedPlaylistContent(
             )
 
             Spacer(modifier = Modifier.weight(1f))
+
+            // Sort lives in the three-dot menu. Its current choice shows on the button
+            // itself, so the list is never in an order the header is not naming.
+            Box {
+                ChunkyIconButton(
+                    icon = Icons.Filled.MoreVert,
+                    description = if (sortOpen) "Hide sort options" else "Show sort options",
+                    tint = MaterialTheme.colorScheme.surface,
+                    size = 48.dp,
+                    onClick = { sortOpen = !sortOpen }
+                )
+                DropdownMenu(expanded = sortOpen, onDismissRequest = { sortOpen = false }) {
+                    PlaylistSortType.entries.forEach { type ->
+                        DropdownMenuItem(
+                            text = { Text(type.label) },
+                            // Radio affordance, as the reference implementation shows.
+                            leadingIcon = {
+                                Icon(
+                                    if (sortType == type) Icons.Filled.RadioButtonChecked
+                                    else Icons.Filled.RadioButtonUnchecked,
+                                    contentDescription = null
+                                )
+                            },
+                            onClick = { sortType = type; sortOpen = false }
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.width(8.dp))
+
+            // Direction is a separate control, hidden for Custom order: reversing a
+            // hand-arranged list is never what the user meant.
+            if (sortType != PlaylistSortType.CUSTOM) {
+                ChunkyIconButton(
+                    icon = Icons.Filled.KeyboardArrowDown,
+                    description = if (sortDescending) "Descending" else "Ascending",
+                    tint = MaterialTheme.colorScheme.surface,
+                    size = 48.dp,
+                    onClick = { sortDescending = !sortDescending }
+                )
+            }
+
+            Spacer(modifier = Modifier.width(8.dp))
 
             Box {
                 ChunkyIconButton(
@@ -276,11 +323,12 @@ private fun DownloadedPlaylistContent(
             }
         } else {
             val listState = rememberLazyListState()
-            // Long-press to lift a row and drag it, which is the gesture the reference
-            // implementation uses. The buttons stay as an accessible equivalent — drag
-            // alone would leave reorder unreachable for anyone who cannot do a long press.
-            val reorderableState = rememberReorderableLazyListState(lazyListState = listState) { from, to ->
-                onMove(from.index, to.index)
+
+            // Sort is view-only; the stored positions are never rewritten, so choosing
+            // Custom order always restores the arrangement the user made. That property
+            // is what makes sorting safe to offer at all.
+            val sorted = remember(songs, sortType, sortDescending) {
+                sortSongs(songs.map { it.toSearchResult() }, sortType, sortDescending)
             }
 
             LazyColumn(
@@ -288,28 +336,14 @@ private fun DownloadedPlaylistContent(
                 verticalArrangement = Arrangement.spacedBy(10.dp),
                 modifier = Modifier.fillMaxSize()
             ) {
-                itemsIndexed(songs, key = { _, s -> s.videoId }) { index, song ->
-                    val asSong = song.toSearchResult()
-                    // ReorderableItem supplies the item scope the drag handle needs, so
-                    // each row must be wrapped in it rather than the LazyColumn.
-                    ReorderableItem(
-                        state = reorderableState,
-                        key = song.videoId
-                    ) { itemScope ->
-                        // The item scope owns the drag modifier; longPressDraggableHandle
-                        // is what makes a long press lift the row.
-                        DownloadedSongRow(
-                            song = asSong,
-                            position = index,
-                            canMoveUp = index > 0,
-                            canMoveDown = index < songs.lastIndex,
-                            onMoveUp = { onMove(index, index - 1) },
-                            onMoveDown = { onMove(index, index + 1) },
-                            onPlay = { onPlaySong(asSong) },
-                            onShowInfo = { onShowInfo(asSong) },
-                            dragModifier = with(itemScope) { Modifier.longPressDraggableHandle() }
-                        )
-                    }
+                itemsIndexed(sorted, key = { _, s -> s.videoId }) { index, song ->
+                    val asSong = song
+                    DownloadedSongRow(
+                        song = asSong,
+                        position = index,
+                        onPlay = { onPlaySong(asSong) },
+                        onShowInfo = { onShowInfo(asSong) }
+                    )
                 }
             }
         }
@@ -361,20 +395,8 @@ private fun CoverArt(thumbnailUrl: String?, size: androidx.compose.ui.unit.Dp) {
 private fun DownloadedSongRow(
     song: SearchResult,
     position: Int,
-    canMoveUp: Boolean,
-    canMoveDown: Boolean,
-    onMoveUp: () -> Unit,
-    onMoveDown: () -> Unit,
     onPlay: () -> Unit,
-    onShowInfo: () -> Unit,
-    /**
-     * Drag modifier from the reorder library's item scope, applied to the handle only.
-     *
-     * Passed as a plain Modifier rather than a lambda: the library hands the modifier to
-     * its caller, so there is nothing to wrap, and a composable-lambda parameter here only
-     * muddied the types.
-     */
-    dragModifier: Modifier = Modifier
+    onShowInfo: () -> Unit
 ) {
     Box {
         Box(
@@ -433,37 +455,6 @@ private fun DownloadedSongRow(
                     contentDescription = "Song info for ${song.title}",
                     tint = MaterialTheme.colorScheme.onSurface
                 )
-            }
-
-            // Only the handle carries the drag modifier, so a long press elsewhere on the
-            // row still reaches the row's own tap and its arrows.
-            IconButton(onClick = {}, modifier = dragModifier) {
-                Icon(
-                    Icons.Filled.DragHandle,
-                    contentDescription = "Reorder ${song.title}",
-                    tint = MaterialTheme.colorScheme.onSurface
-                )
-            }
-
-            // The first and last rows omit the arrow that would move them off the end.
-            // A visible-but-inert arrow reads as a broken control.
-            if (canMoveUp) {
-                IconButton(onClick = onMoveUp) {
-                    Icon(
-                        Icons.Filled.KeyboardArrowUp,
-                        contentDescription = "Move ${song.title} up",
-                        tint = MaterialTheme.colorScheme.onSurface
-                    )
-                }
-            }
-            if (canMoveDown) {
-                IconButton(onClick = onMoveDown) {
-                    Icon(
-                        Icons.Filled.KeyboardArrowDown,
-                        contentDescription = "Move ${song.title} down",
-                        tint = MaterialTheme.colorScheme.onSurface
-                    )
-                }
             }
         }
     }

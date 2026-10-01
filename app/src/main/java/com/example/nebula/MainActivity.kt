@@ -232,7 +232,10 @@ class MainActivity : ComponentActivity() {
                                          // screen = "home" on play, so tapping a result teleported the
                                          // user out of the results they were reading. The MiniPlayer
                                          // is already visible from every tab, so there is nothing to gain.
-                                         "search"    -> SearchScreen(vm)
+                                         // Playing from search opens the full-screen player rather than
+                                         // navigating to a tab: the MiniPlayer is the player surface here, and
+                                         // switching to Home threw away the results the user was reading.
+                                         "search"    -> SearchScreen(vm, onPlayDone = { showSheet = true })
                                         // Downloads is reached from the Playlists
                                         // card, not the nav bar — the route stays.
                                         "playlists" -> PlaylistsScreen(

@@ -260,6 +260,25 @@ class PlayerViewModel : ViewModel() {
         resolveAndPlay(item)
     }
 
+    /**
+     * Plays [item] now, with [rest] queued behind it in the order given.
+     *
+     * The tapped song goes at the HEAD, not the tail. Appending it and calling
+     * [playAll] played `queue[0]` — the first song — so tapping the second song in a
+     * playlist played the first one. "Keep the rest queued behind it" means behind the
+     * tapped song, not behind the list.
+     */
+    fun playFromHere(item: SearchResult, rest: List<SearchResult>) {
+        queue.clear()
+        queue.add(item)
+        // Filter rather than bail out. Returning early when the tapped song is also in
+        // [rest] left the queue empty, so tapping a row emptied the player instead.
+        queue.addAll(rest.filter { it.videoId != item.videoId })
+        queueIndex = 0
+        queueList = queue.toList()
+        resolveAndPlay(item)
+    }
+
     fun playQueueItem(item: SearchResult) {
         queue.add(item)
         queueIndex = queue.lastIndex
