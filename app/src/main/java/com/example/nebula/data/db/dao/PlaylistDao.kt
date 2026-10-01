@@ -110,4 +110,29 @@ interface PlaylistDao {
             "WHERE playlistId = :playlistId AND videoId = :videoId"
     )
     suspend fun updatePosition(playlistId: Long, videoId: String, position: Int): Int
+
+    /**
+     * Moves one song from [from] to [to], shifting everything in between, in a single
+     * statement.
+     *
+     * The single-statement form is the point. The obvious alternative — read the rows,
+     * then `updatePosition` each one — is a read-modify-write spread over N writes, and
+     * wrapping it in `withTransaction` is what this replaced: Room's `withTransaction`
+     * from `viewModelScope` (Dispatchers.Main.immediate) failed with "Cannot perform this
+     * operation because there is no current transaction". One `CASE` expression is atomic
+     * on its own, so no transaction is needed and there is no window for a concurrent
+     * write to slip into. Same shape the reference implementation uses.
+     *
+     * The `BETWEEN MIN(..) AND MAX(..)` bounds the write to the span actually being
+     * reordered; rows outside it keep their position.
+     */
+    @Query(
+        "UPDATE playlist_songs SET position = CASE " +
+            "WHEN position < :from THEN position + 1 " +
+            "WHEN position > :from THEN position - 1 " +
+            "ELSE :to END " +
+            "WHERE playlistId = :playlistId " +
+            "AND position BETWEEN MIN(:from, :to) AND MAX(:from, :to)"
+    )
+    suspend fun moveSong(playlistId: Long, from: Int, to: Int): Int
 }
