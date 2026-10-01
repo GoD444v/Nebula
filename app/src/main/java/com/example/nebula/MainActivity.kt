@@ -236,14 +236,6 @@ class MainActivity : ComponentActivity() {
                                             onOpenPlaylist = { id ->
                                                 playlistId = id
                                                 screen = "playlist"
-                                            },
-                                            onPlayPlaylist = { id ->
-                                                // Queues the whole playlist without navigating.
-                                                // playAll needs the songs up front, and
-                                                // queueItems is a suspend read.
-                                                scope.launch {
-                                                    vm.playAll(playlistsVm.queueItems(id))
-                                                }
                                             }
                                         )
                                         "playlist" -> DownloadedPlaylistScreen(

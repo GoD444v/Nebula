@@ -1,10 +1,11 @@
 package com.example.nebula
 
 import android.app.Application
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
-import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -86,7 +87,8 @@ class PlaylistsScreenTest {
         }
 
         compose.onNodeWithText(longName, substring = true).assertExists()
-        // The play button sharing the row must survive the long title.
-        compose.onNodeWithContentDescription("Play").assertIsDisplayed()
+        // The whole row is the tap target now; there is no play button on the card, so the
+        // title has to survive without one competing for the row's width.
+        compose.onAllNodesWithContentDescription("Play").assertCountEquals(0)
     }
 }

@@ -69,13 +69,12 @@ private val tileAccents = listOf(NeonPink, SunnyYellow, MintTeal)
  * silently do nothing. Omitting the control everywhere is the consistent answer, and it
  * spares the UI a branch on `isSystem` that the DAO already guards.
  *
- * [onOpenPlaylist] opens a playlist's detail screen; [onPlayPlaylist] queues it whole.
+ * [onOpenPlaylist] opens a playlist's detail screen, which is where Play lives.
  */
 fun PlaylistsScreen(
     vm: PlaylistsViewModel = viewModel(),
     onOpenDownloads: () -> Unit = {},
-    onOpenPlaylist: (Long) -> Unit = {},
-    onPlayPlaylist: (Long) -> Unit = {}
+    onOpenPlaylist: (Long) -> Unit = {}
 ) {
     val playlists by vm.playlists.collectAsState()
     val downloadsVm: DownloadViewModel = viewModel()
@@ -171,8 +170,7 @@ fun PlaylistsScreen(
                     PlaylistCard(
                         playlist = playlist,
                         accent = tileAccents[index % tileAccents.size],
-                        onClick = { onOpenPlaylist(playlist.playlist.id) },
-                        onPlay = { onPlayPlaylist(playlist.playlist.id) }
+                        onClick = { onOpenPlaylist(playlist.playlist.id) }
                     )
                 }
             }
@@ -216,12 +214,19 @@ private fun CreatePlaylistDialog(onConfirm: (String) -> Unit, onDismiss: () -> U
     )
 }
 
+/**
+ * One row in the playlist list. Tapping it is the only affordance.
+ *
+ * There is deliberately no play button on the card. Two buttons on a row invites the
+ * question "which one do I press", and a play button next to the name reads as "play this
+ * one song" when it means "open this list". Opening the playlist and pressing Play there
+ * is one unambiguous path, and the detail screen already has a Play button.
+ */
 @Composable
 private fun PlaylistCard(
     playlist: PlaylistWithCount,
     accent: Color,
-    onClick: () -> Unit,
-    onPlay: () -> Unit
+    onClick: () -> Unit
 ) {
     Box {
         Box(
@@ -290,27 +295,6 @@ private fun PlaylistCard(
                     maxLines = 1,
                     color = TextGrey
                 )
-            }
-
-            // Play button
-            Box {
-                Box(
-                    modifier = Modifier
-                        .offset(x = 3.dp, y = 3.dp)
-                        .size(40.dp)
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(MaterialTheme.colorScheme.outline)
-                )
-                IconButton(
-                    onClick = onPlay,
-                    modifier = Modifier
-                        .size(40.dp)
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(MaterialTheme.colorScheme.primary)
-                        .border(3.dp, BorderBlack, RoundedCornerShape(10.dp))
-                ) {
-                    Icon(Icons.Filled.PlayArrow, contentDescription = "Play", tint = MaterialTheme.colorScheme.onSurface)
-                }
             }
         }
     }
