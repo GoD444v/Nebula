@@ -11,6 +11,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.media3.common.Player
 import com.example.nebula.data.LyricsRepository
 import com.example.nebula.data.SearchRepository
+import com.example.nebula.data.download.NebulaDownloads
 import com.example.nebula.data.models.LyricsResponse
 import com.example.nebula.data.models.SearchResult
 import com.example.nebula.player.NextAction
@@ -360,15 +361,32 @@ class PlayerViewModel : ViewModel() {
             }
         }
         viewModelScope.launch {
-            val url = try {
-                searchRepository.getAudioStreamUrl(item.videoId)
-            } catch (_: Exception) {
-                null
+            // A downloaded song does not need a stream URL to start: its bytes are already
+            // in the download cache under the bare videoId, which is the custom cache key
+            // the player now uses. Resolving a URL first would put a hard network
+            // dependency in front of every play, so a downloaded song failed with the
+            // radio off even though it was on disk.
+            val offlineReady = NebulaDownloads.isDownloaded(item.videoId)
+            val url = if (offlineReady) {
+                NebulaDownloads.offlinePlaceholderUri(item.videoId)
+            } else {
+                try {
+                    searchRepository.getAudioStreamUrl(item.videoId)
+                } catch (_: Exception) {
+                    null
+                }
             }
             isLoading = false
             if (url != null) {
                 currentSongTitle = item.title
-                playerManager.playFromUrl(url, item.title, item.artist, item.thumbnailUrl, positionMs)
+                playerManager.playFromUrl(
+                    url = url,
+                    videoId = item.videoId,
+                    title = item.title,
+                    artist = item.artist,
+                    artUrl = item.thumbnailUrl,
+                    positionMs = positionMs
+                )
                 isPlaying = true
             } else {
                 currentSongTitle = "Couldn't load audio"

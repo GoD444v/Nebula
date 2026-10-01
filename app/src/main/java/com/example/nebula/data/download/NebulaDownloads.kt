@@ -75,6 +75,32 @@ object NebulaDownloads {
     private val _downloads = MutableStateFlow<Map<String, Download>>(emptyMap())
     val downloads: Flow<Map<String, Download>> = _downloads
 
+    /**
+     * Whether [videoId] has a completed download whose bytes are on disk.
+     *
+     * This is the gate that lets playback start with no network at all. The player
+     * resolves a stream URL before every play, so with the radio off that lookup fails
+     * and the song never starts — even though the bytes are sitting in the download
+     * cache. Checking this first is what turns "downloaded" into "plays offline".
+     *
+     * Reads the in-memory map, which [rehydrateDownloads] repopulates from the index on
+     * startup, so it is accurate across a process restart without touching SQLite here.
+     */
+    fun isDownloaded(videoId: String): Boolean =
+        _downloads.value[videoId]?.state == Download.STATE_COMPLETED
+
+    /**
+     * A URI that is never dereferenced, for a song whose bytes are already on disk.
+     *
+     * The download cache is keyed on `cacheKey` (the video id), not on the URI, so a
+     * placeholder URI is served entirely from disk by [buildMediaItem]'s
+     * `setCustomCacheKey` and the network is never touched. Same trick [enqueue] uses at
+     * download time, where the placeholder is swapped for a real URL by
+     * [resolveStreamUri] — except offline there is nothing to swap it for, and nothing
+     * needs to be.
+     */
+    fun offlinePlaceholderUri(videoId: String): String = IDLE_URI_PREFIX + videoId
+
     private var appContext: Context? = null
 
     private var downloadManager: DownloadManager? = null

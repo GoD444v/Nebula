@@ -68,14 +68,45 @@ class PlayerManager {
         }, ContextCompat.getMainExecutor(appContext))
     }
 
-    // ponytail: metadata rides on the item so the session notification shows the song, not the app name
-    fun playFromUrl(url: String, title: String? = null, artist: String? = null, artUrl: String? = null, positionMs: Long = 0L) {
+    /**
+     * Builds the MediaItem for one song.
+     *
+     * [cacheKey] is the load-bearing argument. Media3 derives a MediaItem's DataSpec key
+     * from its URI when `setCustomCacheKey` is absent — so without this the player would
+     * look the song up in the download cache under the resolved stream URL, while
+     * [NebulaDownloads.enqueue] wrote it under the bare video id. Two different strings,
+     * so the download-cache read always missed and a downloaded song needed the network
+     * to play. Both sides must key on the same string.
+     */
+    internal fun buildMediaItem(
+        uri: String,
+        cacheKey: String,
+        title: String? = null,
+        artist: String? = null,
+        artUrl: String? = null
+    ): MediaItem {
         val metadata = MediaMetadata.Builder()
             .setTitle(title ?: "Unknown title")
             .setArtist(artist)
             .setArtworkUri(artUrl?.takeIf { it.isNotBlank() }?.let { Uri.parse(it) })
             .build()
-        val item = MediaItem.Builder().setUri(url).setMediaMetadata(metadata).build()
+        return MediaItem.Builder()
+            .setUri(uri)
+            .setCustomCacheKey(cacheKey)
+            .setMediaMetadata(metadata)
+            .build()
+    }
+
+    // ponytail: metadata rides on the item so the session notification shows the song, not the app name
+    fun playFromUrl(
+        url: String,
+        videoId: String,
+        title: String? = null,
+        artist: String? = null,
+        artUrl: String? = null,
+        positionMs: Long = 0L
+    ) {
+        val item = buildMediaItem(url, videoId, title, artist, artUrl)
         val ctrl = controller
         if (ctrl == null) {
             pendingItem = item
