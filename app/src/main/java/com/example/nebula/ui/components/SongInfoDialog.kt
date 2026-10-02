@@ -102,7 +102,7 @@ fun SongInfoDialog(
                         Text(
                             artist,
                             fontSize = 13.sp,
-                            color = TextGrey
+                            color = TextGrey()
                         )
                     }
                 }
@@ -130,7 +130,7 @@ fun SongInfoDialog(
                     Text(
                         "Not played yet",
                         fontSize = 12.sp,
-                        color = TextGrey
+                        color = TextGrey()
                     )
                 }
             }
@@ -153,7 +153,7 @@ private fun InfoRow(label: String, value: String) {
         Text(
             label,
             fontSize = 13.sp,
-            color = TextGrey
+            color = TextGrey()
         )
         Text(
             value,

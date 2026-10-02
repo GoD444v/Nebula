@@ -44,7 +44,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.nebula.ui.theme.BorderBlack
 import com.example.nebula.ui.theme.MintTeal
 import com.example.nebula.ui.theme.NebulaTheme
-import com.example.nebula.ui.theme.TextGrey
+
 import com.example.nebula.viewmodel.PlayerViewModel
 
 @Composable

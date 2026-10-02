@@ -50,7 +50,7 @@ import coil3.compose.AsyncImage
 import com.example.nebula.data.models.SearchResult
 import com.example.nebula.ui.theme.BorderBlack
 import com.example.nebula.ui.theme.MintTeal
-import com.example.nebula.ui.theme.TextGrey
+
 
 /**
  * The per-song overflow menu, as a bottom sheet.
@@ -166,9 +166,9 @@ private fun SheetHeader(song: SearchResult) {
                 song.artist,
                 fontSize = 13.sp,
                 maxLines = 1,
-                // contentColor, not TextGrey: TextGrey is a fixed constant that does not
-                // invert with the palette, so on a dark sheet it disappeared.
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                // Same value TextGrey() now returns, written out so this line needs no
+                // import for a secondary label.
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.62f)
             )
         }
     }

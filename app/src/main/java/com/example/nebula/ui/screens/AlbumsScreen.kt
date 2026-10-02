@@ -140,7 +140,7 @@ private fun AlbumCard(title: String, tracks: Int) {
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(title, fontWeight = FontWeight.Black, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurface)
-                Text("$tracks tracks", fontSize = 12.sp, color = TextGrey)
+                Text("$tracks tracks", fontSize = 12.sp, color = TextGrey())
             }
         }
         Column(
@@ -169,7 +169,7 @@ private fun AlbumCard(title: String, tracks: Int) {
             }
             Spacer(modifier = Modifier.height(8.dp))
             Text(title, fontWeight = FontWeight.Black, fontSize = 14.sp, maxLines = 1, color = MaterialTheme.colorScheme.onSurface)
-            Text("$tracks tracks", fontSize = 12.sp, color = TextGrey)
+            Text("$tracks tracks", fontSize = 12.sp, color = TextGrey())
         }
     }
 }

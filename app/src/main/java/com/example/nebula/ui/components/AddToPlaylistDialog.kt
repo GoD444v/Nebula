@@ -112,7 +112,7 @@ fun AddToPlaylistDialog(
                     Text(
                         if (playlists.isEmpty()) "No playlists yet" else "No playlist matches \"$query\"",
                         fontSize = 13.sp,
-                        color = TextGrey,
+                        color = TextGrey(),
                         modifier = Modifier.padding(vertical = 16.dp)
                     )
                 } else {
@@ -158,7 +158,7 @@ private fun CreateAndAddDialog(onConfirm: (String) -> Unit, onDismiss: () -> Uni
                 Text(
                     "The selected songs go straight in.",
                     fontSize = 12.sp,
-                    color = TextGrey
+                    color = TextGrey()
                 )
             }
         },
@@ -234,7 +234,7 @@ private fun PlaylistPickRow(entry: PlaylistWithCount, onClick: () -> Unit) {
                 maxLines = 1,
                 color = MaterialTheme.colorScheme.onSurface
             )
-            Text("${entry.songCount} tracks", fontSize = 12.sp, color = TextGrey)
+            Text("${entry.songCount} tracks", fontSize = 12.sp, color = TextGrey())
         }
     }
 }

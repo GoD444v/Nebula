@@ -315,7 +315,7 @@ private fun FeedRow(card: HomeCard, isPlaying: Boolean, onPlay: (() -> Unit)?, o
                     text = card.subtitle,
                     fontSize = 12.sp,
                     maxLines = 1,
-                    color = TextGrey,
+                    color = TextGrey(),
                     modifier = Modifier.basicMarquee()
                 )
             }
@@ -438,7 +438,7 @@ private fun ErrorCard(message: String, onRetry: () -> Unit) {
             Text(
                 "Check your connection and tap Retry",
                 fontSize = 13.sp,
-                color = TextGrey
+                color = TextGrey()
             )
             Spacer(modifier = Modifier.height(16.dp))
             Box(modifier = Modifier.clickable(onClick = onRetry)) {

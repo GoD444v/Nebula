@@ -36,7 +36,7 @@ import androidx.compose.ui.unit.sp
 import coil3.compose.SubcomposeAsyncImage
 import com.example.nebula.ui.theme.BorderBlack
 import com.example.nebula.ui.theme.NebulaTheme
-import com.example.nebula.ui.theme.TextGrey
+
 import com.example.nebula.viewmodel.PlayerViewModel
 
 // ponytail: extracted from MainActivity verbatim so the call site stays one line

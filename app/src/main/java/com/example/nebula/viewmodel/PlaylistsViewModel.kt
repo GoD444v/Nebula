@@ -29,6 +29,18 @@ import kotlinx.coroutines.launch
 data class AddToPlaylistResult(val added: Int, val duplicates: Int)
 
 /**
+ * One playlist's sort choice: which order, and which direction.
+ *
+ * A data class rather than two loose fields so the pair is replaced together and cannot
+ * be left half-updated.
+ */
+data class PlaylistSortChoice(
+    val type: com.example.nebula.ui.screens.PlaylistSortType =
+        com.example.nebula.ui.screens.PlaylistSortType.CUSTOM,
+    val descending: Boolean = false
+)
+
+/**
  * Playlists the user has created in Nebula. Local-first: nothing here talks to
  * YouTube Music, so the tab works with no account and no network.
  */
@@ -71,6 +83,29 @@ class PlaylistsViewModel(app: Application) : AndroidViewModel(app) {
     /** Opens [id] for [songs]. Called when a card is tapped. */
     fun select(id: Long) {
         _selectedPlaylistId.value = id
+    }
+
+    /**
+     * The sort choice for each playlist, so it survives leaving and re-entering.
+     *
+     * Held here rather than in the screen with `remember` because the screen composable
+     * is rebuilt from scratch on every visit: `remember` starts at CUSTOM again, so a
+     * list sorted by Name silently reverted to manual order the moment the user went
+     * back and returned. Keyed by playlist id so two playlists keep separate choices.
+     *
+     * Only in memory, so it resets when the app process dies — the same lifetime as the
+     * tab order in DataStore would give, minus the file. Deliberately not persisted:
+     * sort is view-only and a forgotten choice is harmless, so there is nothing here
+     * worth a schema.
+     */
+    private val _sorts = MutableStateFlow<Map<Long, PlaylistSortChoice>>(emptyMap())
+    val sorts: StateFlow<Map<Long, PlaylistSortChoice>> = _sorts.asStateFlow()
+
+    fun sortFor(playlistId: Long): PlaylistSortChoice =
+        _sorts.value[playlistId] ?: PlaylistSortChoice()
+
+    fun setSort(playlistId: Long, choice: PlaylistSortChoice) {
+        _sorts.value = _sorts.value + (playlistId to choice)
     }
 
     /**

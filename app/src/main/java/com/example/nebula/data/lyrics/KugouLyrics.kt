@@ -1,5 +1,7 @@
 package com.example.nebula.data.lyrics
 
+// ponytail: KRC algorithm ported from kugou-lyric (ISC) — see licenses/KUGOU-ISC.txt
+// SPDX-License-Identifier: GPL-3.0-or-later
 import android.util.Base64
 import com.example.nebula.data.models.LyricLine
 import com.example.nebula.data.models.LyricWord

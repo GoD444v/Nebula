@@ -1,5 +1,7 @@
 package com.example.nebula.ui.screens
 
+// ponytail: "CUSTOMIZE TABS" string from VoxMusic (MIT) — see licenses/VOXMUSIC-MIT.txt
+// SPDX-License-Identifier: GPL-3.0-or-later
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable

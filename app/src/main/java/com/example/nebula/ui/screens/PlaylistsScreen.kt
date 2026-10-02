@@ -301,7 +301,7 @@ private fun PlaylistCard(
                     "${playlist.songCount} tracks",
                     fontSize = 12.sp,
                     maxLines = 1,
-                    color = TextGrey
+                    color = TextGrey()
                 )
             }
         }

@@ -1,5 +1,7 @@
 package com.example.nebula.ui.theme
 
+// ponytail: palette data ported from VoxMusic (MIT) — see licenses/VOXMUSIC-MIT.txt
+// SPDX-License-Identifier: GPL-3.0-or-later
 import android.content.Context
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
@@ -111,6 +113,59 @@ fun VoxCustom.toPalette() = VoxPalette(
     onBg = Color(icons), onSurface = Color(icons),
     nav = Color(nav)
 )
+
+/**
+ * Black or white, whichever is readable on [background].
+ *
+ * Uses the same WCAG relative-luminance formula Material's own contrast checks use.
+ * Chosen over a fixed constant because the accents are user-editable in the custom
+ * palette: no single "text on pink" value is right for all of them.
+ */
+private fun onColorFor(background: Color): Color =
+    if (background.luminance() > 0.5f) Color(0xFF111111) else Color(0xFFFFFFFF)
+
+/**
+ * The `surfaceContainer` ramp for a palette, derived from its own two colours.
+ *
+ * Material's tonal-elevation ramp is a fixed set of tinted greys meant for M3's purple
+ * baseline. A Vox palette is a flat surface plus one ink colour, so the ramp is rebuilt
+ * as small alpha steps of [VoxPalette.onSurface] over [VoxPalette.surface] — the same ink
+ * the text already uses, so a container and the label on it cannot disagree.
+ *
+ * [mutedText] is the 70%-alpha ink the rest of the app uses for secondary labels
+ * (SongMenuSheet's artist line), promoted to a named role so components that ask for
+ * `onSurfaceVariant` get it instead of Material's purple-grey.
+ */
+private class SurfaceRamp(
+    val step1: Color,
+    val step2: Color,
+    val step3: Color,
+    val step4: Color,
+    val dim: Color,
+    val mutedText: Color
+)
+
+private fun surfaceRamp(palette: VoxPalette): SurfaceRamp {
+    val ink = palette.onSurface
+    val surface = palette.surface
+    return SurfaceRamp(
+        step1 = blend(surface, ink, 0.03f),
+        step2 = blend(surface, ink, 0.06f),
+        step3 = blend(surface, ink, 0.10f),
+        step4 = blend(surface, ink, 0.14f),
+        dim = blend(surface, ink, 0.12f),
+        mutedText = ink.copy(alpha = 0.70f)
+    )
+}
+
+/** [over] laid on [under] at [fraction] opacity. */
+private fun blend(under: Color, over: Color, fraction: Float): Color =
+    androidx.compose.ui.graphics.Color(
+        red = under.red + (over.red - under.red) * fraction,
+        green = under.green + (over.green - under.green) * fraction,
+        blue = under.blue + (over.blue - under.blue) * fraction,
+        alpha = 1f
+    )
 
 // One lookup for every screen: the 6 built-ins plus the user's own palette.
 fun paletteById(id: String): VoxPalette =
@@ -236,6 +291,21 @@ fun NebulaTheme(
     }
     // Each palette carries its OWN bg/surface/text — switching palettes changes the whole look,
     // exactly like VoxMusic's pal.bg / pal.cardBg / pal.text
+    //
+    // The surface-container ramp is derived HERE, once, rather than pinned at each call
+    // site. A VoxPalette names eight colours and no more, so every Material role outside
+    // that list — surfaceContainer*, surfaceVariant, onSurfaceVariant, outlineVariant —
+    // kept Material's default purple-tinted value while the TEXT on top of it used the
+    // palette's own onSurface. That mismatch is what made the sort dropdown unreadable
+    // under Classic80s Vox, and it is latent in all five AlertDialogs and the player's
+    // Slider for the same reason. Deriving the ramp from surface/onSurface fixes every
+    // one of them at the point they all route through, instead of five separate patches
+    // that a sixth component would forget.
+    //
+    // surfaceTintColor is set to the surface colour itself so tonal elevation stops
+    // tinting panels purple: the Vox look is flat fills with hard borders, not tonal
+    // elevation, and a tint fights the 3px borders everything here is built from.
+    val surfaceRamp = surfaceRamp(palette)
     val colors = base.copy(
         primary = palette.pink,
         secondary = palette.cyan,
@@ -247,7 +317,26 @@ fun NebulaTheme(
         onBackground = palette.onBg,
         onSurface = palette.onSurface,
         // outline = our shared 3D-shadow colour (unused by Material3 elsewhere in Nebula)
-        outline = if (palette.bg.luminance() < 0.5f) DarkShadow else BorderBlack
+        outline = if (palette.bg.luminance() < 0.5f) DarkShadow else BorderBlack,
+        // Roles Material derives FROM surface. Filling the ramp here is what stops any
+        // component that reads one from landing on an undefined colour.
+        surfaceVariant = surfaceRamp.dim,
+        onSurfaceVariant = surfaceRamp.mutedText,
+        surfaceContainerLowest = palette.surface,
+        surfaceContainerLow = surfaceRamp.step1,
+        surfaceContainer = surfaceRamp.step2,
+        surfaceContainerHigh = surfaceRamp.step3,
+        surfaceContainerHighest = surfaceRamp.step4,
+        surfaceBright = palette.surface,
+        surfaceDim = surfaceRamp.step1,
+        // onPrimary/onSecondary/onTertiary were inherited as TextWhite from the base
+        // schemes, so a chip label was white on every palette's pink — invisible on
+        // Neo Brutalist Mono's #CCCCCC at 1.6:1, and under 4.5:1 on four others.
+        onPrimary = onColorFor(palette.pink),
+        onSecondary = onColorFor(palette.cyan),
+        onTertiary = onColorFor(palette.yellow),
+        outlineVariant = surfaceRamp.dim,
+        surfaceTint = palette.surface
     )
     MaterialTheme(
         colorScheme = colors,

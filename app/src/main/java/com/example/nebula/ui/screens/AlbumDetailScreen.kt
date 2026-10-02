@@ -153,7 +153,7 @@ fun AlbumDetailScreen(
                                 "Nothing to show here yet",
                                 fontWeight = FontWeight.Black,
                                 fontSize = 14.sp,
-                                color = TextGrey
+                                color = TextGrey()
                             )
                         }
                     }
@@ -231,7 +231,7 @@ private fun DetailHeader(page: DetailPage, fallbackTitle: String, vm: PlayerView
                 text = page.subtitle,
                 fontSize = 12.sp,
                 maxLines = 1,
-                color = TextGrey,
+                color = TextGrey(),
                 modifier = Modifier.basicMarquee()
             )
             Spacer(modifier = Modifier.height(14.dp))
@@ -344,7 +344,7 @@ private fun TrackRow(track: SearchResult, isPlaying: Boolean, onPlay: () -> Unit
                     text = track.artist,
                     fontSize = 12.sp,
                     maxLines = 1,
-                    color = TextGrey,
+                    color = TextGrey(),
                     modifier = Modifier.basicMarquee()
                 )
             }

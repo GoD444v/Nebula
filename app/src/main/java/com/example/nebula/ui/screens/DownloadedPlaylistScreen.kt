@@ -71,6 +71,7 @@ import com.example.nebula.ui.theme.MintTeal
 import com.example.nebula.ui.theme.SunnyYellow
 import com.example.nebula.ui.theme.TextGrey
 import com.example.nebula.viewmodel.PlaylistsViewModel
+import com.example.nebula.viewmodel.PlaylistSortChoice
 import com.example.nebula.viewmodel.PlayerViewModel
 
 /**
@@ -108,6 +109,7 @@ fun DownloadedPlaylistScreen(
     val songs by vm.songs.collectAsState()
     val selectedId by vm.selectedPlaylistId.collectAsState()
     val playlists by vm.playlists.collectAsState()
+    val sorts by vm.sorts.collectAsState()
 
     // A rename must not break sync: the DAO's lookups key on isSystem, never on the name,
     // so showing the live row here is safe.
@@ -119,6 +121,11 @@ fun DownloadedPlaylistScreen(
 
     DownloadedPlaylistContent(
         name = name,
+        playlistId = selectedId,
+        // Read from the ViewModel so the choice outlives this composable. collectAsState
+        // on a map keyed by id means switching playlists shows that playlist's own choice.
+        sortChoice = sorts[selectedId] ?: PlaylistSortChoice(),
+        onSortChange = { choice -> selectedId?.let { vm.setSort(it, choice) } },
         songs = songs,
         shuffleOn = playerVm.shuffleOn,
         repeatMode = playerVm.repeatMode.label(),
@@ -205,6 +212,9 @@ private fun PlaylistSongEntity.toSearchResult() = SearchResult(
 @Composable
 private fun DownloadedPlaylistContent(
     name: String,
+    playlistId: Long?,
+    sortChoice: PlaylistSortChoice,
+    onSortChange: (PlaylistSortChoice) -> Unit,
     songs: List<PlaylistSongEntity>,
     shuffleOn: Boolean,
     repeatMode: String,
@@ -219,8 +229,12 @@ private fun DownloadedPlaylistContent(
 ) {
     var showRename by remember { mutableStateOf(false) }
     var overflowOpen by remember { mutableStateOf(false) }
-    var sortType by remember { mutableStateOf(PlaylistSortType.CUSTOM) }
-    var sortDescending by remember { mutableStateOf(false) }
+
+    // Owned by the ViewModel, not by this composable: `remember` here reset to Custom
+    // on every visit, so a Name-sorted list reverted the moment the user went back and
+    // returned. See [PlaylistsViewModel.sorts].
+    val sortType = sortChoice.type
+    val sortDescending = sortChoice.descending
 
     Column(
         modifier = Modifier
@@ -251,25 +265,37 @@ private fun DownloadedPlaylistContent(
                     size = 48.dp,
                     onClick = { overflowOpen = true }
                 )
-                DropdownMenu(expanded = overflowOpen, onDismissRequest = { overflowOpen = false }) {
+                DropdownMenu(
+                    expanded = overflowOpen,
+                    onDismissRequest = { overflowOpen = false },
+                    // Pinned to `surface`. A bare DropdownMenu takes Material's default
+                    // `surfaceContainer`, which no Vox palette defines — so the panel
+                    // resolved to a colour no palette chose, while the item text used the
+                    // palette's `onSurface`. Under Classic80s Vox (onSurface #111111) that
+                    // put near-black text on a dark panel: the sort items were unreadable.
+                    // containerColor alone is enough; Material derives the content colour
+                    // for it, and every item below also sets its colour explicitly.
+                    containerColor = MaterialTheme.colorScheme.surface
+                ) {
                     Text(
                         "Sort by",
                         fontSize = 12.sp,
-                        color = TextGrey,
+                        color = MaterialTheme.colorScheme.onSurface,
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
                     )
                     PlaylistSortType.entries.forEach { type ->
                         DropdownMenuItem(
-                            text = { Text(type.label) },
+                            text = { Text(type.label, color = MaterialTheme.colorScheme.onSurface) },
                             // Radio affordance, as the reference implementation shows.
                             leadingIcon = {
                                 Icon(
                                     if (sortType == type) Icons.Filled.RadioButtonChecked
                                     else Icons.Filled.RadioButtonUnchecked,
-                                    contentDescription = null
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onSurface
                                 )
                             },
-                            onClick = { sortType = type; overflowOpen = false }
+                            onClick = { onSortChange(sortChoice.copy(type = type)); overflowOpen = false }
                         )
                     }
 
@@ -277,24 +303,30 @@ private fun DownloadedPlaylistContent(
                     // what the user meant, and the item would read as doing nothing.
                     if (sortType != PlaylistSortType.CUSTOM) {
                         DropdownMenuItem(
-                            text = { Text(if (sortDescending) "Descending" else "Ascending") },
+                            text = {
+                                Text(
+                                    if (sortDescending) "Descending" else "Ascending",
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                            },
                             leadingIcon = {
                                 Icon(
                                     if (sortDescending) Icons.Filled.ArrowDownward
                                     else Icons.Filled.ArrowUpward,
-                                    contentDescription = null
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onSurface
                                 )
                             },
-                            onClick = { sortDescending = !sortDescending }
+                            onClick = { onSortChange(sortChoice.copy(descending = !sortDescending)) }
                         )
                     }
 
-                    HorizontalDivider()
+                    HorizontalDivider(color = MaterialTheme.colorScheme.onSurface)
 
                     // No Delete entry for the system playlist: dao.delete refuses
                     // isSystem rows, so a Delete here would look enabled and do nothing.
                     DropdownMenuItem(
-                        text = { Text("Rename") },
+                        text = { Text("Rename", color = MaterialTheme.colorScheme.onSurface) },
                         onClick = {
                             overflowOpen = false
                             showRename = true
@@ -314,7 +346,6 @@ private fun DownloadedPlaylistContent(
         Row(verticalAlignment = Alignment.CenterVertically) {
             PlaylistCover(
                 thumbnailUrl = songs.firstOrNull()?.thumbnailUrl,
-                title = name,
                 size = 104.dp
             )
 
@@ -332,7 +363,7 @@ private fun DownloadedPlaylistContent(
                 Text(
                     "Playlist · ${songs.size} tracks",
                     fontSize = 12.sp,
-                    color = TextGrey
+                    color = TextGrey()
                 )
 
                 Spacer(modifier = Modifier.height(12.dp))
@@ -367,7 +398,7 @@ private fun DownloadedPlaylistContent(
                 Text(
                     "Nothing downloaded yet",
                     fontSize = 15.sp,
-                    color = TextGrey
+                    color = TextGrey()
                 )
             }
         } else {
@@ -515,7 +546,7 @@ private fun DownloadedSongRow(
                     song.artist,
                     fontSize = 12.sp,
                     maxLines = 1,
-                    color = TextGrey
+                    color = TextGrey()
                 )
             }
 
@@ -550,13 +581,15 @@ private fun DownloadedSongRow(
 }
 
 /**
- * Playlist cover: artwork with the name set over its lower edge.
+ * Playlist cover: the artwork, cropped to a square.
  *
- * A scrim behind the text, because the artwork is whatever the first song happens to be
- * and a dark photo under white text is unreadable without one.
+ * No title and no scrim over it. The name is set beside this in 20sp Black already, so
+ * repeating it across the artwork said the same thing twice in two places, and the
+ * gradient needed to make that overlay readable darkened the very artwork it sat on.
+ * The name beside it is the single place it appears.
  */
 @Composable
-private fun PlaylistCover(thumbnailUrl: String?, title: String, size: androidx.compose.ui.unit.Dp) {
+private fun PlaylistCover(thumbnailUrl: String?, size: androidx.compose.ui.unit.Dp) {
     Box(
         modifier = Modifier
             .size(size)
@@ -568,6 +601,7 @@ private fun PlaylistCover(thumbnailUrl: String?, title: String, size: androidx.c
             AsyncImage(
                 model = thumbnailUrl,
                 contentDescription = null,
+                // Crop, so a non-square cover fills the square instead of being letterboxed.
                 contentScale = androidx.compose.ui.layout.ContentScale.Crop,
                 modifier = Modifier.fillMaxSize()
             )
@@ -581,51 +615,40 @@ private fun PlaylistCover(thumbnailUrl: String?, title: String, size: androidx.c
                     .size(40.dp)
             )
         }
-
-        // Scrim: a vertical gradient, opaque enough at the bottom to carry white text.
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(
-                    androidx.compose.ui.graphics.Brush.verticalGradient(
-                        colors = listOf(
-                            androidx.compose.ui.graphics.Color.Transparent,
-                            androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.75f)
-                        )
-                    )
-                )
-        )
-
-        Text(
-            title,
-            fontWeight = FontWeight.Black,
-            fontSize = 13.sp,
-            color = androidx.compose.ui.graphics.Color.White,
-            maxLines = 2,
-            modifier = Modifier
-                .align(Alignment.BottomStart)
-                .padding(horizontal = 8.dp, vertical = 7.dp)
-        )
     }
 }
 
-/** Vox "PLAY ALL" pill: filled, black-bordered, offset shadow. */
+/**
+ * Vox "PLAY ALL" pill: filled, black-bordered, offset shadow.
+ *
+ * The shadow layer is `matchParentSize` on purpose. It was an empty `Box` with only a
+ * background, so it measured zero and the 3D effect simply was not drawn — which is
+ * what the screenshot showed: a flat yellow pill next to two properly extruded chips.
+ * `matchParentSize` makes the shadow exactly the pill's size, offset down-right.
+ *
+ * Height is pinned to [BUTTON] to match the shuffle and repeat buttons beside it. Sized
+ * by its own vertical padding it came out shorter than the 44dp square chips, so the row
+ * read as three differently sized controls rather than one set.
+ */
 @Composable
 private fun VoxPlayAllButton(onClick: () -> Unit) {
-    Box(modifier = Modifier.height(44.dp)) {
+    val shape = RoundedCornerShape(14.dp)
+    Box(modifier = Modifier.height(PLAY_ALL_HEIGHT)) {
         Box(
             modifier = Modifier
+                .matchParentSize()
                 .offset(x = 4.dp, y = 4.dp)
-                .clip(RoundedCornerShape(14.dp))
+                .clip(shape)
                 .background(MaterialTheme.colorScheme.outline)
         )
         Row(
             modifier = Modifier
-                .clip(RoundedCornerShape(14.dp))
+                .height(PLAY_ALL_HEIGHT)
+                .clip(shape)
                 .background(SunnyYellow)
-                .border(3.dp, BorderBlack, RoundedCornerShape(14.dp))
+                .border(3.dp, BorderBlack, shape)
                 .clickable(onClick = onClick)
-                .padding(horizontal = 14.dp, vertical = 9.dp),
+                .padding(horizontal = 14.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Icon(
@@ -644,6 +667,9 @@ private fun VoxPlayAllButton(onClick: () -> Unit) {
         }
     }
 }
+
+/** One height for all three transport controls, so the row reads as a set. */
+private val PLAY_ALL_HEIGHT = 44.dp
 
 /**
  * Small Vox-style arrow chip: offset shadow behind a 3px-bordered box.

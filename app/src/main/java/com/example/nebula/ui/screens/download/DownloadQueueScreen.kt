@@ -355,7 +355,7 @@ private fun DownloadRow(
                             fontSize = 12.sp,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
-                            color = TextGrey
+                            color = TextGrey()
                         )
                     }
                     Spacer(modifier = Modifier.height(4.dp))

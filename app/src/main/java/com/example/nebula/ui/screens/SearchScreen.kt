@@ -187,8 +187,8 @@ fun SearchScreen(
                     unfocusedContainerColor = MaterialTheme.colorScheme.surface,
                     focusedTextColor = MaterialTheme.colorScheme.onSurface,
                     unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
-                    focusedPlaceholderColor = TextGrey,
-                    unfocusedPlaceholderColor = TextGrey
+                    focusedPlaceholderColor = TextGrey(),
+                    unfocusedPlaceholderColor = TextGrey()
                 )
             )
             Spacer(modifier = Modifier.width(10.dp))
