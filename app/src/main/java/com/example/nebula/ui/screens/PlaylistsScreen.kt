@@ -256,12 +256,19 @@ private fun PlaylistCard(
                 .padding(10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Playlist cover: real song art when we have it, accent tile when we do not.
-            val thumbnail = playlist.playlist.thumbnailUrl
-            if (thumbnail != null) {
+            // The first song's artwork, supplied by the query's subquery. The playlist
+            // row's own thumbnailUrl column is never written by any call site, so
+            // reading it here always yielded null and every card showed the lettered
+            // accent tile. Accent tile now means only "this playlist has no songs".
+            val thumbnail = playlist.coverThumbnailUrl
+            if (!thumbnail.isNullOrBlank()) {
                 AsyncImage(
                     model = thumbnail,
                     contentDescription = null,
+                    // Crop, so a non-square cover fills the square rather than
+                    // being letterboxed. Without this the same song looked right in
+                    // search and wrong here.
+                    contentScale = androidx.compose.ui.layout.ContentScale.Crop,
                     modifier = Modifier
                         .width(52.dp)
                         .aspectRatio(1f)

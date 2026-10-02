@@ -46,6 +46,13 @@ data class DetailPage(
     val tracks: List<SearchResult> = emptyList()
 )
 
+/** A selectable genre from the YouTube Music moods & genres grid. */
+data class GenreItem(
+    val title: String,
+    val browseId: String,
+    val params: String
+)
+
 class SearchRepository {
 
     object SearchFilter {
@@ -338,6 +345,56 @@ class SearchRepository {
             throw e
         } catch (_: Exception) {
             HomeFeed(emptyList(), emptyList())
+        }
+    }
+
+    /**
+     * The genre/mood grid from YouTube Music. Browse FEmusic_moods_and_genres,
+     * parse musicNavigationButtonRenderer items — each carries its own browseId
+     * + params for fetching that genre's track listing.
+     */
+    suspend fun moodAndGenres(): List<GenreItem> = withContext(Dispatchers.IO) {
+        try {
+            val page = tube.browse(YouTubeClient.WEB_REMIX, browseId = "FEmusic_moods_and_genres")
+                .body<JsonObject>()
+            val contents = page.obj("contents")
+                ?.obj("singleColumnBrowseResultsRenderer")
+                ?.arr("tabs")?.firstOrNull().let { it as? JsonObject }
+                ?.obj("tabRenderer")?.obj("content")
+                ?.obj("sectionListRenderer")?.arr("contents") ?: return@withContext emptyList()
+
+            val out = ArrayList<GenreItem>()
+            for (entry in contents) {
+                val grid = (entry as? JsonObject)?.obj("gridRenderer") ?: continue
+                for (item in grid.arr("contents").orEmpty()) {
+                    val nav = (item as? JsonObject)?.obj("musicNavigationButtonRenderer") ?: continue
+                    val title = runsText(nav.obj("text")).ifBlank { continue }
+                    val endpoint = nav.obj("navigationEndpoint")?.obj("browseEndpoint") ?: continue
+                    val browseId = endpoint.str("browseId") ?: continue
+                    val params = endpoint.str("params") ?: continue
+                    out.add(GenreItem(title, browseId, params))
+                }
+            }
+            out
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    /**
+     * Fetch a genre's track listing. Browse the genre's browseId + params,
+     * parse musicCarouselShelfRenderer sections into a single HomeSection.
+     */
+    suspend fun genreTracks(browseId: String, params: String): HomeSection = withContext(Dispatchers.IO) {
+        try {
+            val page = tube.browse(YouTubeClient.WEB_REMIX, browseId = browseId, params = params)
+                .body<JsonObject>()
+            val sections = sectionsOf(page)
+            val title = sections.firstOrNull()?.title ?: "Genre"
+            val cards = sections.flatMap { it.cards }
+            HomeSection(title, cards)
+        } catch (_: Exception) {
+            HomeSection("Genre", emptyList())
         }
     }
 

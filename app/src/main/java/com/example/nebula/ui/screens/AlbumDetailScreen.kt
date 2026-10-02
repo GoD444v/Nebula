@@ -22,8 +22,10 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -31,7 +33,10 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -42,10 +47,15 @@ import androidx.compose.ui.unit.sp
 import coil3.compose.SubcomposeAsyncImage
 import com.example.nebula.data.DetailPage
 import com.example.nebula.data.SearchRepository
+import com.example.nebula.data.download.NebulaDownloads
 import com.example.nebula.data.models.SearchResult
+import com.example.nebula.ui.components.AddToPlaylistDialog
+import com.example.nebula.ui.components.SongMenuSheet
 import com.example.nebula.ui.theme.BorderBlack
 import com.example.nebula.ui.theme.TextGrey
+import com.example.nebula.viewmodel.PlaylistsViewModel
 import com.example.nebula.viewmodel.PlayerViewModel
+import kotlinx.coroutines.launch
 
 /**
  * Album / playlist detail page: header art + Play All + tracklist.
@@ -58,10 +68,19 @@ fun AlbumDetailScreen(
     browseId: String,
     title: String,
     vm: PlayerViewModel,
+    playlistsVm: PlaylistsViewModel? = null,
     onBack: () -> Unit
 ) {
     val repo = remember { SearchRepository() }
     var page by remember(browseId) { mutableStateOf<DetailPage?>(null) }
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+
+    // One song's overflow menu at a time. null = closed.
+    var menuFor by remember { mutableStateOf<SearchResult?>(null) }
+    var addToPlaylistFor by remember { mutableStateOf<SearchResult?>(null) }
+
+    val playlists by (playlistsVm?.playlists?.collectAsState() ?: remember { mutableStateOf(emptyList()) })
 
     LaunchedEffect(browseId) {
         page = repo.getDetail(browseId)
@@ -169,10 +188,54 @@ fun AlbumDetailScreen(
                                 vm.playYouTubeSong(
                                     track.videoId, track.title, track.artist, track.thumbnailUrl
                                 )
-                            }
+                            },
+                            onShowMenu = { menuFor = track }
                         )
                     }
                 }
+            }
+        }
+
+        // One sheet at a time: the menu closes before the playlist picker opens.
+        menuFor?.let { song ->
+            SongMenuSheet(
+                song = song,
+                isDownloaded = NebulaDownloads.isDownloaded(song.videoId),
+                onDismiss = { menuFor = null },
+                onPlayNext = { vm.playNext(song); menuFor = null },
+                onAddToQueue = { vm.addToQueue(song); menuFor = null },
+                onAddToPlaylist = { menuFor = null; addToPlaylistFor = song },
+                onShare = {
+                    menuFor = null
+                    shareSong(context, song)
+                },
+                onDownload = { NebulaDownloads.enqueue(song); menuFor = null },
+                onRemoveDownload = { NebulaDownloads.remove(song.videoId); menuFor = null }
+            )
+        }
+
+        addToPlaylistFor?.let { song ->
+            if (playlistsVm != null) {
+                AddToPlaylistDialog(
+                    songs = listOf(song),
+                    playlists = playlists,
+                    onAddToExisting = { id ->
+                        scope.launch {
+                            val result = playlistsVm.addToPlaylist(id, listOf(song))
+                            addToPlaylistFor = null
+                            toastResult(context, result)
+                        }
+                    },
+                    onCreateWith = { n ->
+                        scope.launch {
+                            playlistsVm.createWithSongs(n, listOf(song))
+                            addToPlaylistFor = null
+                        }
+                    },
+                    onDismiss = { addToPlaylistFor = null }
+                )
+            } else {
+                addToPlaylistFor = null
             }
         }
     }
@@ -280,10 +343,21 @@ private fun DetailHeader(page: DetailPage, fallbackTitle: String, vm: PlayerView
     }
 }
 
-/** One track: small square thumb, marquee title/artist, small play button right. */
+/**
+ * One track: small square thumb, marquee title/artist, overflow menu right.
+ *
+ * The pink play button that used to sit here was a second control for an action the row
+ * itself already performs on tap, so it was removed at the human partner's request. Its
+ * own tap target also meant a mis-tap started the wrong song.
+ */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun TrackRow(track: SearchResult, isPlaying: Boolean, onPlay: () -> Unit) {
+private fun TrackRow(
+    track: SearchResult,
+    isPlaying: Boolean,
+    onPlay: () -> Unit,
+    onShowMenu: () -> Unit
+) {
     Box {
         Box(
             modifier = Modifier
@@ -349,31 +423,15 @@ private fun TrackRow(track: SearchResult, isPlaying: Boolean, onPlay: () -> Unit
                 )
             }
 
-            // Small chunky play button
-            Box {
-                Box(
-                    modifier = Modifier
-                        .offset(x = 3.dp, y = 3.dp)
-                        .size(40.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(MaterialTheme.colorScheme.outline)
+            // Overflow menu. Same sheet the search and playlist rows use, so a song's menu
+            // behaves identically wherever it appears. Its own IconButton means opening it
+            // does not also trigger the row's play.
+            IconButton(onClick = onShowMenu) {
+                Icon(
+                    Icons.Filled.MoreVert,
+                    contentDescription = "More options for ${track.title}",
+                    tint = MaterialTheme.colorScheme.onSurface
                 )
-                Box(
-                    modifier = Modifier
-                        .size(40.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(MaterialTheme.colorScheme.primary)
-                        .border(3.dp, BorderBlack, RoundedCornerShape(12.dp))
-                        .clickable(onClick = onPlay),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        Icons.Filled.PlayArrow,
-                        contentDescription = "Play",
-                        tint = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
             }
         }
     }

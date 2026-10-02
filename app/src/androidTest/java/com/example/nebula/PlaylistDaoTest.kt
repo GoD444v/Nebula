@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -51,6 +52,66 @@ class PlaylistDaoTest {
         thumbnailUrl = null,
         position = position
     )
+
+    private fun songWithArt(
+        playlistId: Long,
+        videoId: String,
+        position: Int,
+        thumbnailUrl: String
+    ) = PlaylistSongEntity(
+        playlistId = playlistId,
+        videoId = videoId,
+        title = "Title $videoId",
+        artist = "Artist $videoId",
+        thumbnailUrl = thumbnailUrl,
+        position = position
+    )
+
+    /**
+     * The playlist row's own `thumbnailUrl` is never written by any call site, so a card
+     * built from it always fell back to the lettered accent tile. The cover is read from
+     * the first song instead, which needs no migration and fixes playlists already owned.
+     */
+    @Test
+    fun observePlaylists_usesTheFirstSongsArtworkAsTheCover() = runBlocking {
+        val id = dao.insert(PlaylistEntity(name = "With Art"))
+        dao.insertSongs(
+            listOf(
+                songWithArt(id, "first", 0, "https://img/first.jpg"),
+                songWithArt(id, "second", 1, "https://img/second.jpg")
+            )
+        )
+
+        val row = dao.observePlaylists().first().first { it.playlist.id == id }
+
+        assertEquals("https://img/first.jpg", row.coverThumbnailUrl)
+    }
+
+    @Test
+    fun observePlaylists_coverFollowsTheStoredOrderNotInsertionOrder() = runBlocking {
+        val id = dao.insert(PlaylistEntity(name = "Reordered"))
+        dao.insertSongs(
+            listOf(
+                songWithArt(id, "a", 0, "https://img/a.jpg"),
+                songWithArt(id, "b", 1, "https://img/b.jpg")
+            )
+        )
+        // The user moves b to the top.
+        dao.moveSong(id, 1, 0)
+
+        val row = dao.observePlaylists().first().first { it.playlist.id == id }
+
+        assertEquals("https://img/b.jpg", row.coverThumbnailUrl)
+    }
+
+    @Test
+    fun observePlaylists_coverIsNullForAnEmptyPlaylist() = runBlocking {
+        val id = dao.insert(PlaylistEntity(name = "Empty"))
+
+        val row = dao.observePlaylists().first().first { it.playlist.id == id }
+
+        assertNull(row.coverThumbnailUrl)
+    }
 
     @Test
     fun observePlaylists_returnsZeroCountForEmptyPlaylist() = runBlocking {

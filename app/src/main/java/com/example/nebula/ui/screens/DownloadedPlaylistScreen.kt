@@ -201,12 +201,18 @@ private fun Int.label(): String = when (this) {
     else -> "Repeat off"
 }
 
-/** Maps a stored playlist row back to the queue item shape `playAll` expects. */
+/**
+ * Maps a stored playlist row back to the queue item shape `playAll` expects.
+ *
+ * `addedAt` is carried across because the Date Added sort reads it, and it lives on the
+ * entity rather than on [SearchResult] for everything that is not a playlist row.
+ */
 private fun PlaylistSongEntity.toSearchResult() = SearchResult(
     videoId = videoId,
     title = title,
     artist = artist,
-    thumbnailUrl = thumbnailUrl.orEmpty()
+    thumbnailUrl = thumbnailUrl.orEmpty(),
+    addedAt = addedAt
 )
 
 @Composable

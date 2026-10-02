@@ -35,9 +35,11 @@ enum class PlaylistSortType(val label: String) {
  * latter sorts every capital before every lowercase, so "abbey road" lands after "Zoë",
  * which reads as broken.
  *
- * PLAY_TIME sorts by [SearchResult.playCount] and DATE_ADDED by the order songs were
- * added, both of which are always 0 for now — see the note in the commit. They are wired
- * so enabling them later needs no UI change.
+ * DATE_ADDED reads [SearchResult.addedAt], which `playlist_songs` has always stored. It
+ * used to return the list untouched and so meant insertion order — a label that lied.
+ *
+ * PLAY_TIME still sorts by [SearchResult.playCount], which is always 0 because nothing
+ * increments it yet. That one is wired for a future, not for today.
  */
 fun sortSongs(
     songs: List<SearchResult>,
@@ -54,9 +56,9 @@ fun sortSongs(
         PlaylistSortType.CUSTOM -> songs
         PlaylistSortType.NAME -> songs.sortedWith(compareBy(collator) { it.title })
         PlaylistSortType.ARTIST -> songs.sortedWith(compareBy(collator) { it.artist })
-        // No timestamp on a playlist_songs row today, so "date added" can only mean
-        // insertion order, which is the list's own order.
-        PlaylistSortType.DATE_ADDED -> songs
+        // Stable, so songs sharing a millisecond keep their input order instead of
+        // swapping between reads — which would look like the reorder-reset bug.
+        PlaylistSortType.DATE_ADDED -> songs.sortedBy { it.addedAt }
         PlaylistSortType.PLAY_TIME -> songs.sortedBy { it.playCount }
     }
 

@@ -4,6 +4,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.example.nebula.data.models.SearchResult
 import com.example.nebula.ui.screens.PlaylistSortType
 import com.example.nebula.ui.screens.sortSongs
+import com.example.nebula.viewmodel.PlaylistSortChoice
 import org.junit.Assert.assertEquals
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -22,6 +23,15 @@ class PlaylistSortTest {
 // accident because the input order happens to match.
     private fun song(title: String, artist: String = "Artist") =
         SearchResult(videoId = "id-$title", title = title, artist = artist, thumbnailUrl = "")
+
+    private fun stamped(title: String, addedAt: Long) =
+        SearchResult(
+            videoId = "id-$title",
+            title = title,
+            artist = "Artist",
+            thumbnailUrl = "",
+            addedAt = addedAt
+        )
 
     private val list = listOf(
         song("Wonderwall", "Oasis"),
@@ -92,5 +102,44 @@ class PlaylistSortTest {
     @Test
     fun emptyListIsHandled() {
         assertEquals(emptyList<SearchResult>(), sortSongs(emptyList(), PlaylistSortType.NAME, true))
+    }
+
+    /**
+     * Date Added used to be a placeholder that returned the list untouched, so it silently
+     * meant insertion order. These assert it reads the stored stamp instead.
+     */
+    @Test
+    fun dateAddedSortsByTheStoredTimestamp() {
+        // Added newest-first in the list, so insertion order and stamp order disagree.
+        val songs = listOf(stamped("C", 300), stamped("A", 100), stamped("B", 200))
+
+        assertEquals(listOf("A", "B", "C"), titles(sortSongs(songs, PlaylistSortType.DATE_ADDED, false)))
+    }
+
+    @Test
+    fun dateAddedDescendingReversesTheStamps() {
+        val songs = listOf(stamped("A", 100), stamped("B", 200), stamped("C", 300))
+
+        assertEquals(listOf("C", "B", "A"), titles(sortSongs(songs, PlaylistSortType.DATE_ADDED, true)))
+    }
+
+    @Test
+    fun dateAddedIsStableForSongsSharingATimestamp() {
+        // Songs added in the same millisecond must not swap places between reads, which
+        // would look exactly like the reorder-reset bug this session fixed. Kotlin's
+        // sortedWith is stable, so equal keys keep input order.
+        val songs = listOf(stamped("X", 500), stamped("Y", 500), stamped("Z", 500))
+
+        assertEquals(listOf("X", "Y", "Z"), titles(sortSongs(songs, PlaylistSortType.DATE_ADDED, false)))
+    }
+
+    @Test
+    fun dateAddedIsTheDefaultSortChoice() {
+        // The human partner asked for this deliberately, having been told a manual reorder
+        // stays invisible under it. Pinned here so changing it is a deliberate act.
+        assertEquals(
+            PlaylistSortType.DATE_ADDED,
+            PlaylistSortChoice().type
+        )
     }
 }

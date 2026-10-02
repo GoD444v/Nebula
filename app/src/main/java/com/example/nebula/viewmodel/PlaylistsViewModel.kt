@@ -9,6 +9,7 @@ import com.example.nebula.data.db.dao.PlaylistWithCount
 import com.example.nebula.data.db.entities.PlaylistEntity
 import com.example.nebula.data.db.entities.PlaylistSongEntity
 import com.example.nebula.data.models.SearchResult
+import com.example.nebula.ui.screens.PlaylistSortType
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -33,10 +34,15 @@ data class AddToPlaylistResult(val added: Int, val duplicates: Int)
  *
  * A data class rather than two loose fields so the pair is replaced together and cannot
  * be left half-updated.
+ *
+ * Defaults to DATE_ADDED because the human partner asked for it directly, having been
+ * told that a manual reorder stays invisible while it is selected. The stored positions
+ * are never rewritten by a sort, so choosing CUSTOM order still restores the arrangement
+ * exactly — it is one tap away, not a recovery. Changing this default back to CUSTOM is
+ * the whole fix if that trade stops suiting.
  */
 data class PlaylistSortChoice(
-    val type: com.example.nebula.ui.screens.PlaylistSortType =
-        com.example.nebula.ui.screens.PlaylistSortType.CUSTOM,
+    val type: PlaylistSortType = PlaylistSortType.DATE_ADDED,
     val descending: Boolean = false
 )
 

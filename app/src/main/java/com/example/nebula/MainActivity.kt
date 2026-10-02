@@ -216,6 +216,9 @@ class MainActivity : ComponentActivity() {
                                                     browseId = dId,
                                                     title = detailTitle,
                                                     vm = vm,
+                                                    // So the per-track menu's "Add to playlist"
+                                                    // has a playlist list to write into.
+                                                    playlistsVm = playlistsVm,
                                                     onBack = { detailId = null }
                                                 )
                                             } else {

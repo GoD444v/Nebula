@@ -9,17 +9,30 @@ import com.example.nebula.data.db.entities.PlaylistEntity
 import com.example.nebula.data.db.entities.PlaylistSongEntity
 import kotlinx.coroutines.flow.Flow
 
-/** A playlist plus how many songs it holds, counted in SQL rather than in Kotlin. */
+/**
+ * A playlist plus how many songs it holds and what its cover should be, both counted in
+ * SQL rather than in Kotlin.
+ *
+ * [coverThumbnailUrl] comes from the first song by stored position rather than from
+ * `PlaylistEntity.thumbnailUrl`, which no call site has ever written — so a card built
+ * from the column alone always fell back to the lettered accent tile. Reading the first
+ * song fixes every playlist already on disk, with no migration.
+ */
 data class PlaylistWithCount(
     @Embedded val playlist: PlaylistEntity,
-    val songCount: Int
+    val songCount: Int,
+    val coverThumbnailUrl: String?
 )
 
 @Dao
 interface PlaylistDao {
 
     @Query(
-        "SELECT p.*, (SELECT COUNT(*) FROM playlist_songs WHERE playlistId = p.id) AS songCount " +
+        "SELECT p.*, " +
+            "(SELECT COUNT(*) FROM playlist_songs WHERE playlistId = p.id) AS songCount, " +
+            // The cover follows the stored order, so it changes when the user reorders.
+            "(SELECT thumbnailUrl FROM playlist_songs WHERE playlistId = p.id " +
+            "ORDER BY position LIMIT 1) AS coverThumbnailUrl " +
             "FROM playlists p ORDER BY p.lastUpdatedAt DESC"
     )
     fun observePlaylists(): Flow<List<PlaylistWithCount>>
