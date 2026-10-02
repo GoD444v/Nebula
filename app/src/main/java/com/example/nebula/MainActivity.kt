@@ -76,6 +76,7 @@ import com.example.nebula.ui.screens.FullSheetPlayer
 import com.example.nebula.ui.screens.download.DownloadQueueScreen
 import com.example.nebula.ui.screens.DownloadedPlaylistScreen
 import com.example.nebula.ui.screens.HomeScreen
+import com.example.nebula.ui.screens.OnboardingScreen
 import com.example.nebula.ui.screens.PlaylistsScreen
 import com.example.nebula.ui.screens.SearchScreen
 import com.example.nebula.ui.screens.SettingsScreen
@@ -83,9 +84,11 @@ import com.example.nebula.ui.screens.TabCustomizerScreen
 import com.example.nebula.ui.screens.allAvailableTabs
 import com.example.nebula.ui.theme.BorderBlack
 import com.example.nebula.ui.theme.NebulaTheme
+import com.example.nebula.ui.theme.OnboardingStore
 import com.example.nebula.ui.theme.TextBlack
 import com.example.nebula.ui.theme.TextWhite
 import com.example.nebula.ui.theme.ThemeStore
+import com.example.nebula.viewmodel.HomeViewModel
 import com.example.nebula.viewmodel.PlaylistsViewModel
 import com.example.nebula.viewmodel.PlayerViewModel
 
@@ -102,6 +105,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         ThemeStore.init(applicationContext)
+        OnboardingStore.init(applicationContext)
         vm.attach(applicationContext)
         askNotificationPermission()
         askMediaPermission()
@@ -112,10 +116,14 @@ class MainActivity : ComponentActivity() {
             // land in the Activity's ViewModelStore, so the list and the detail screen
             // share one selection instead of each holding its own.
             val playlistsVm: PlaylistsViewModel = viewModel()
+            // Same Activity-scoped instance HomeScreen resolves internally — the
+            // onboarding gate's loadWithGenres lands on the feed Home shows.
+            val homeVm: HomeViewModel = viewModel()
             val context = androidx.compose.ui.platform.LocalContext.current
             var screen by remember { mutableStateOf("home") }
             var showSheet by remember { mutableStateOf(false) }
             var showTabCustomizer by remember { mutableStateOf(false) }
+            var showOnboarding by remember { mutableStateOf(!OnboardingStore.isDone) }
             // "downloads" is intentionally absent: it is no longer a nav tab —
             // it lives inside Playlists now (PlaylistsScreen's Downloads card).
             val defaultTabs = listOf("home", "search", "playlists", "settings")
@@ -139,6 +147,24 @@ class MainActivity : ComponentActivity() {
                 if (!saved.isNullOrEmpty()) {
                     activeTabs = saved
                 }
+            }
+
+            // First launch: genre picker gates everything, same early-return
+            // pattern as the tab customizer below. Back exits — the user can
+            // onboard on next launch; nothing half-persisted.
+            if (showOnboarding) {
+                BackHandler { (context as? ComponentActivity)?.finish() }
+                NebulaTheme {
+                    OnboardingScreen(
+                        onComplete = { picked ->
+                            val endpoints = picked.map { Triple(it.title, it.browseId, it.params) }
+                            OnboardingStore.complete(context, endpoints)
+                            if (endpoints.isNotEmpty()) homeVm.loadWithGenres(endpoints)
+                            showOnboarding = false
+                        }
+                    )
+                }
+                return@setContent
             }
 
             if (showTabCustomizer) {
@@ -224,9 +250,17 @@ class MainActivity : ComponentActivity() {
                                             } else {
                                                 HomeScreen(
                                                     vm,
+                                                    playlistsVm = playlistsVm,
                                                     onBrowseClick = { id, pageTitle ->
                                                         detailId = id
                                                         detailTitle = pageTitle
+                                                    },
+                                                    // Same route the Playlists tab uses, so a
+                                                    // playlist opened from Home behaves
+                                                    // identically to one opened from the list.
+                                                    onOpenPlaylist = { id ->
+                                                        playlistId = id
+                                                        screen = "playlist"
                                                     }
                                                 )
                                             }

@@ -23,17 +23,28 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.QueueMusic
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -50,6 +61,8 @@ import com.example.nebula.ui.theme.BorderBlack
 import com.example.nebula.ui.theme.MintTeal
 import com.example.nebula.ui.theme.NebulaTheme
 import com.example.nebula.ui.theme.TextGrey
+import com.example.nebula.viewmodel.PlaylistsViewModel
+import kotlinx.coroutines.launch
 import com.example.nebula.viewmodel.HomeViewModel
 import com.example.nebula.viewmodel.PlayerViewModel
 
@@ -58,12 +71,21 @@ import com.example.nebula.viewmodel.PlayerViewModel
 fun HomeScreen(
     vm: PlayerViewModel = viewModel(),
     homeVm: HomeViewModel = viewModel(),
-    onBrowseClick: (browseId: String, title: String) -> Unit = { _, _ -> }
+    playlistsVm: PlaylistsViewModel? = null,
+    onBrowseClick: (browseId: String, title: String) -> Unit = { _, _ -> },
+    onOpenPlaylist: (Long) -> Unit = {}
 ) {
     val feed by homeVm.feed.collectAsState()
     val isLoading by homeVm.isLoading.collectAsState()
     val errorMessage by homeVm.errorMessage.collectAsState()
     val selectedChip by homeVm.selectedChip.collectAsState()
+    val scope = rememberCoroutineScope()
+
+    // Hoisted out of the LazyColumn on purpose. Its content lambda is LazyListScope, not
+    // @Composable, so collectAsState cannot be called in there -- and a local val also
+    // gives the lambdas below a non-null receiver to smart-cast against.
+    val playlists: PlaylistsViewModel? = playlistsVm
+    val myPlaylists = playlists?.playlists?.collectAsState()?.value.orEmpty()
 
     Column(
         modifier = Modifier
@@ -171,6 +193,40 @@ fun HomeScreen(
                         }
                     }
 
+                    // Your playlists first, above the YouTube feed. The reference app orders it this
+                    // way too: AccountPlaylists renders before the community sections
+                    // (Echo HomeScreen.kt:806-809), because what the user made outranks
+                    // what YouTube suggests.
+                    //
+                    // Nothing renders when the list is empty, rather than an empty
+                    // banner: a heading over nothing reads as a broken section.
+                    if (playlists != null && myPlaylists.isNotEmpty()) {
+                        item(key = "your-playlists-title") {
+                            SectionBanner(title = "Your playlists", isFirst = true)
+                        }
+                        itemsIndexed(
+                            myPlaylists,
+                            key = { _, p -> "mine-${p.playlist.id}" }
+                        ) { _, entry ->
+                            MyPlaylistRow(
+                                entry = entry,
+                                onOpen = { onOpenPlaylist(entry.playlist.id) },
+                                onPlayAll = {
+                                    scope.launch {
+                                        // One-shot read; nothing subscribes here.
+                                        vm.playAll(playlists.songsOf(entry.playlist.id))
+                                    }
+                                },
+                                onRename = { newName ->
+                                    playlists.rename(entry.playlist.id, newName)
+                                },
+                                onDelete = {
+                                    playlists.delete(entry.playlist.id)
+                                }
+                            )
+                        }
+                    }
+
                     currentFeed.sections.forEachIndexed { sectionIndex, section ->
                         item(key = "title-$sectionIndex") {
                             SectionBanner(
@@ -204,6 +260,186 @@ fun HomeScreen(
             }
         }
     }
+}
+
+/**
+ * One of the user's own playlists on Home.
+ *
+ * Shaped like the feed rows already on this screen — cover, name, track count — so Home
+ * keeps one card language. The reference app uses a horizontal `LazyRow` here; this is a
+ * vertical list because that is what every other section on this screen already does, and
+ * a second layout on one screen reads as a mistake.
+ *
+ * Tap OPENS the playlist, which is what the reference app's card tap does too
+ * (Echo HomeScreen.kt:1329). Play lives in the overflow rather than on the tap, so a tap
+ * can never start the wrong thing by accident.
+ */
+@Composable
+private fun MyPlaylistRow(
+    entry: com.example.nebula.data.db.dao.PlaylistWithCount,
+    onOpen: () -> Unit,
+    onPlayAll: () -> Unit,
+    onRename: (String) -> Unit,
+    onDelete: () -> Unit
+) {
+    val shape = RoundedCornerShape(16.dp)
+    var menuOpen by remember { mutableStateOf(false) }
+    var renaming by remember { mutableStateOf(false) }
+    var confirmingDelete by remember { mutableStateOf(false) }
+
+    Box {
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .offset(x = 4.dp, y = 4.dp)
+                .clip(shape)
+                .background(MaterialTheme.colorScheme.outline)
+        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(shape)
+                .background(MaterialTheme.colorScheme.surface)
+                .border(3.dp, BorderBlack, shape)
+                .clickable(onClick = onOpen)
+                .padding(10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            val cover = entry.coverThumbnailUrl
+            Box(
+                modifier = Modifier
+                    .size(52.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(MintTeal)
+                    .border(3.dp, BorderBlack, RoundedCornerShape(14.dp)),
+                contentAlignment = Alignment.Center
+            ) {
+                if (!cover.isNullOrBlank()) {
+                    coil3.compose.AsyncImage(
+                        model = cover,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                } else {
+                    Icon(
+                        Icons.Filled.QueueMusic,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.size(26.dp)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.width(12.dp))
+
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    entry.playlist.name,
+                    fontWeight = FontWeight.Black,
+                    fontSize = 14.sp,
+                    maxLines = 1,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    "${entry.songCount} tracks",
+                    fontSize = 12.sp,
+                    maxLines = 1,
+                    color = TextGrey()
+                )
+            }
+
+            Box {
+                IconButton(onClick = { menuOpen = true }) {
+                    Icon(
+                        Icons.Filled.MoreVert,
+                        contentDescription = "More options for ${entry.playlist.name}",
+                        tint = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+                DropdownMenu(
+                    expanded = menuOpen,
+                    onDismissRequest = { menuOpen = false },
+                    // Pinned to `surface`: the default `surfaceContainer` is not a colour
+                    // any Vox palette defines, so the text on it was unreadable.
+                    containerColor = MaterialTheme.colorScheme.surface
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("Play all", color = MaterialTheme.colorScheme.onSurface) },
+                        onClick = { menuOpen = false; onPlayAll() }
+                    )
+                    // Rename and Delete are absent for the built-in Downloaded playlist.
+                    // `dao.delete` refuses `isSystem` rows, so offering them would present
+                    // controls that look live and silently do nothing.
+                    if (!entry.playlist.isSystem) {
+                        DropdownMenuItem(
+                            text = { Text("Rename", color = MaterialTheme.colorScheme.onSurface) },
+                            onClick = { menuOpen = false; renaming = true }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Delete", color = MaterialTheme.colorScheme.error) },
+                            onClick = { menuOpen = false; confirmingDelete = true }
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    if (renaming) {
+        RenamePlaylistDialog(
+            current = entry.playlist.name,
+            onConfirm = { newName ->
+                onRename(newName)
+                renaming = false
+            },
+            onDismiss = { renaming = false }
+        )
+    }
+
+    if (confirmingDelete) {
+        AlertDialog(
+            onDismissRequest = { confirmingDelete = false },
+            title = { Text("Delete playlist?") },
+            text = {
+                Text(
+                    "\"${entry.playlist.name}\" and its ${entry.songCount} tracks will be " +
+                        "removed. Downloaded songs stay on disk.",
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { onDelete(); confirmingDelete = false }) {
+                    Text("Delete", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmingDelete = false }) { Text("Cancel") }
+            }
+        )
+    }
+}
+
+@Composable
+private fun RenamePlaylistDialog(current: String, onConfirm: (String) -> Unit, onDismiss: () -> Unit) {
+    var name by remember(current) { mutableStateOf(current) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Rename playlist") },
+        text = {
+            OutlinedTextField(
+                value = name,
+                onValueChange = { name = it },
+                singleLine = true,
+                label = { Text("Name") }
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(name) }, enabled = name.isNotBlank()) { Text("Rename") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
 }
 
 /** Section title — the screen banner scaled down. */
@@ -361,9 +597,9 @@ private fun CardLetter(title: String) {
     )
 }
 
-/** VoxMusic filter chip — same look as the Search screen's. */
+/** VoxMusic filter chip — same look as the Search screen's. Shared with onboarding + settings. */
 @Composable
-private fun HomeFilterChip(label: String, selected: Boolean, onClick: () -> Unit) {
+internal fun HomeFilterChip(label: String, selected: Boolean, onClick: () -> Unit) {
     val bgColor = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface
     val textColor = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
 

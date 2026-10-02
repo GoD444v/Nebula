@@ -192,6 +192,28 @@ class PlaylistsViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
+     * The songs of [playlistId] as queue items, in stored order.
+     *
+     * Exists because nothing could previously read a playlist's songs without observing
+     * it: "Play all" from a Home card needs the list up front, and subscribing to the
+     * detail screen's flow just to take a snapshot of it would keep a collector alive for
+     * a one-shot read.
+     *
+     * The SDD ledger lists a `queueItems` here as already shipped. It was not, which is
+     * why this is being added rather than called.
+     */
+    suspend fun songsOf(playlistId: Long): List<SearchResult> =
+        dao.observeSongs(playlistId).first().map { row ->
+            SearchResult(
+                videoId = row.videoId,
+                title = row.title,
+                artist = row.artist,
+                thumbnailUrl = row.thumbnailUrl.orEmpty(),
+                addedAt = row.addedAt
+            )
+        }
+
+    /**
      * Adds [songs] to an existing playlist and reports what happened, so the picker can
      * tell the difference between "added" and "already there" instead of appearing to do
      * nothing.

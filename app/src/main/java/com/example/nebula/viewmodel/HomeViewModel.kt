@@ -5,7 +5,11 @@ import androidx.lifecycle.viewModelScope
 import com.example.nebula.data.SearchRepository
 import com.example.nebula.data.models.HomeChip
 import com.example.nebula.data.models.HomeFeed
+import com.example.nebula.data.models.HomeSection
+import com.example.nebula.ui.theme.OnboardingStore
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -37,7 +41,11 @@ class HomeViewModel(
     private var loadJob: Job? = null
 
     init {
-        load()
+        // Returning user with saved genres gets the genre feed; everyone else
+        // gets the default. OnboardingStore.init runs in onCreate, before any
+        // ViewModel exists, so in-memory state is ready here.
+        val saved = OnboardingStore.selectedGenreEndpoints
+        if (saved.isNotEmpty()) loadWithGenres(saved) else load()
     }
 
     /** params = null loads the default feed; a chip's params reloads just that category. */
@@ -70,4 +78,39 @@ class HomeViewModel(
     fun refresh() = load(_selectedChip.value)
 
     fun retry() = load(null)
+
+    /**
+     * Load the default feed plus one section per selected genre. Genre sections
+     * are prepended so they appear above the YouTube feed. Each genre fetch is
+     * independent — a failure returns an empty section, never blocks the rest.
+     */
+    fun loadWithGenres(genres: List<Triple<String, String, String>>) {
+        loadJob?.cancel()
+        loadJob = viewModelScope.launch {
+            _isLoading.value = true
+            _errorMessage.value = null
+            val home = repository.home(null)
+            if (home.sections.isEmpty() && _feed.value == null) {
+                _errorMessage.value = "Couldn't load your home feed"
+                _isLoading.value = false
+                return@launch
+            }
+            val genreSections = genres.map { (title, browseId, params) ->
+                async {
+                    try {
+                        repository.genreTracks(browseId, params).copy(title = title)
+                    } catch (_: Exception) {
+                        HomeSection(title, emptyList())
+                    }
+                }
+            }.awaitAll().filter { it.cards.isNotEmpty() }
+            defaultChips = home.chips
+            _feed.value = home.copy(
+                chips = defaultChips,
+                sections = genreSections + home.sections
+            )
+            _selectedChip.value = null
+            _isLoading.value = false
+        }
+    }
 }

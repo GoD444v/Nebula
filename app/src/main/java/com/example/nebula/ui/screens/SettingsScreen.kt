@@ -11,11 +11,14 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -42,6 +45,7 @@ import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -58,6 +62,9 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.nebula.data.GenreItem
+import com.example.nebula.data.SearchRepository
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -69,22 +76,33 @@ import com.example.nebula.ui.components.ChunkyAction
 import com.example.nebula.ui.components.ChunkyWindow
 import com.example.nebula.ui.theme.BorderBlack
 import com.example.nebula.ui.theme.NebulaTheme
+import com.example.nebula.ui.theme.OnboardingStore
 import com.example.nebula.ui.theme.ThemeStore
 import com.example.nebula.ui.theme.VoxCustom
 import com.example.nebula.ui.theme.VoxPalette
 import com.example.nebula.ui.theme.VoxPalettes
 import com.example.nebula.ui.theme.paletteById
 import com.example.nebula.ui.theme.toPalette
+import com.example.nebula.viewmodel.HomeViewModel
 
 // VoxMusic pattern: every screen reads the palette directly — no MaterialTheme dependency
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun SettingsScreen(onCustomizeTabs: () -> Unit = {}) {
+fun SettingsScreen(
+    onCustomizeTabs: () -> Unit = {},
+    homeVm: HomeViewModel = viewModel()
+) {
     val context = LocalContext.current
     val picked = ThemeStore.paletteId
     val pal = paletteById(picked)
     var editorOpen by remember { mutableStateOf(false) }
     var draft by remember { mutableStateOf(ThemeStore.custom) }
     val wifiOnly by DownloadPrefs.wifiOnly.collectAsState(initial = false)
+    // Genre picker state — dialog fetches the live grid once per open
+    var genreOpen by remember { mutableStateOf(false) }
+    var genreList by remember { mutableStateOf<List<GenreItem>>(emptyList()) }
+    var genreSelected by remember { mutableStateOf(OnboardingStore.selectedGenres.toSet()) }
+    var genreLoading by remember { mutableStateOf(false) }
 
     // The page is taller than the viewport (CLEAR CACHE sat below the fold, so the tap
     // never landed and its window never opened), hence the verticalScroll.
@@ -626,8 +644,131 @@ fun SettingsScreen(onCustomizeTabs: () -> Unit = {}) {
             }
         }
 
-        // Mini warning window before wiping downloaded song data. ChunkyWindow, not
-        // AlertDialog — this is the app's own window idiom.
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Music genres — same card idiom as the WiFi toggle above. Opens a
+        // ChunkyWindow picker; saving refreshes the home feed immediately.
+        Box {
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .offset(x = 4.dp, y = 4.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(MaterialTheme.colorScheme.outline)
+            )
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(pal.surface)
+                    .border(3.dp, BorderBlack, RoundedCornerShape(16.dp))
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.QueueMusic,
+                        contentDescription = null,
+                        tint = pal.onSurface,
+                        modifier = Modifier.size(22.dp)
+                    )
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            "Music genres",
+                            fontWeight = FontWeight.Black,
+                            fontSize = 15.sp,
+                            color = pal.onSurface
+                        )
+                        Text(
+                            if (OnboardingStore.selectedGenres.isEmpty()) "Shapes your home feed"
+                            else OnboardingStore.selectedGenres.joinToString(", "),
+                            fontSize = 11.sp,
+                            color = pal.onSurface
+                        )
+                    }
+                    Text(
+                        "CHANGE",
+                        modifier = Modifier
+                            .clickable {
+                                genreSelected = OnboardingStore.selectedGenres.toSet()
+                                genreOpen = true
+                            }
+                            .padding(8.dp),
+                        fontWeight = FontWeight.Black,
+                        fontSize = 13.sp,
+                        color = pal.pink
+                    )
+                }
+            }
+        }
+
+        if (genreOpen) {
+            LaunchedEffect(Unit) {
+                genreLoading = true
+                genreList = SearchRepository().moodAndGenres()
+                genreLoading = false
+            }
+            ChunkyWindow(
+                title = "Music genres",
+                onDismissRequest = { genreOpen = false }
+            ) {
+                if (genreLoading) {
+                    Text("Loading genres...", fontSize = 13.sp, color = pal.onSurface)
+                } else {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 320.dp)
+                            .verticalScroll(rememberScrollState())
+                    ) {
+                        FlowRow(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            genreList.forEach { genre ->
+                                val isSelected = genre.title in genreSelected
+                                HomeFilterChip(
+                                    label = genre.title,
+                                    selected = isSelected,
+                                    onClick = {
+                                        genreSelected =
+                                            if (isSelected) genreSelected - genre.title
+                                            else genreSelected + genre.title
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+                ChunkyAction(
+                    label = "Save",
+                    color = pal.pink,
+                    onClick = {
+                        genreOpen = false
+                        val endpoints = genreList
+                            .filter { it.title in genreSelected }
+                            .map { Triple(it.title, it.browseId, it.params) }
+                        OnboardingStore.complete(context, endpoints)
+                        if (endpoints.isNotEmpty()) homeVm.loadWithGenres(endpoints)
+                        else homeVm.load(null)
+                    }
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                ChunkyAction(
+                    label = "Cancel",
+                    color = pal.bg,
+                    onClick = { genreOpen = false }
+                )
+            }
+        }
+
+        // Mini warning window before wiping downloaded song data. ChunkyWindow, not        // AlertDialog — this is the app's own window idiom.
         if (showClearWarn) {
             ChunkyWindow(
                 title = "Clear cache?",

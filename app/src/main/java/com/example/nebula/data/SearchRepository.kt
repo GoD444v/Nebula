@@ -366,10 +366,13 @@ class SearchRepository {
             val out = ArrayList<GenreItem>()
             for (entry in contents) {
                 val grid = (entry as? JsonObject)?.obj("gridRenderer") ?: continue
-                for (item in grid.arr("contents").orEmpty()) {
+                // Grid renderers carry items, not contents (cf. Echo's GridRenderer model)
+                for (item in grid.arr("items").orEmpty()) {
                     val nav = (item as? JsonObject)?.obj("musicNavigationButtonRenderer") ?: continue
-                    val title = runsText(nav.obj("text")).ifBlank { continue }
-                    val endpoint = nav.obj("navigationEndpoint")?.obj("browseEndpoint") ?: continue
+                    // Echo's MoodAndGenres: title lives in buttonText, endpoint in
+                    // clickCommand — not text / navigationEndpoint.
+                    val title = runsText(nav.obj("buttonText")).ifBlank { continue }
+                    val endpoint = nav.obj("clickCommand")?.obj("browseEndpoint") ?: continue
                     val browseId = endpoint.str("browseId") ?: continue
                     val params = endpoint.str("params") ?: continue
                     out.add(GenreItem(title, browseId, params))

@@ -100,7 +100,7 @@ fun FullSheetPlayer(vm: PlayerViewModel, onClose: () -> Unit) {
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            ChunkyBtn(Icons.Filled.KeyboardArrowDown, "Close", MaterialTheme.colorScheme.surface, 48.dp, onClose)
+            ChunkyBtn(Icons.Filled.KeyboardArrowDown, "Close", MaterialTheme.colorScheme.surface, 48.dp, onClick = onClose)
 
             // The same overflow the search rows and playlist rows use. It was missing
             // here, which left the playing song as the one song with no route to Share,
@@ -182,9 +182,14 @@ fun FullSheetPlayer(vm: PlayerViewModel, onClose: () -> Unit) {
                 onClick = { vm.toggleShuffle() }
             )
             ChunkyBtn(Icons.Filled.SkipPrevious, "Previous", MaterialTheme.colorScheme.surface, 56.dp, onClick = { vm.previous() })
+            // secondary + onSecondary, exactly as the MiniPlayer draws this same action.
+            // Was primary + onSurface, which was both a different colour from the
+            // MiniPlayer and low-contrast ink for a light pink background.
             ChunkyBtn(
                 if (vm.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow, "Play",
-                MaterialTheme.colorScheme.primary, 72.dp, onClick = { vm.togglePlay() }
+                MaterialTheme.colorScheme.secondary, 72.dp,
+                tint = MaterialTheme.colorScheme.onSecondary,
+                onClick = { vm.togglePlay() }
             )
             ChunkyBtn(Icons.Filled.SkipNext, "Next", MaterialTheme.colorScheme.surface, 56.dp, onClick = { vm.next() })
             ChunkyBtn(
@@ -504,11 +509,21 @@ private fun ArtBox(side: Dp, title: String, videoId: String) {
 }
 
 @Composable
+/**
+ * A chunky extruded button.
+ *
+ * [tint] is the ink drawn on [bg], defaulting to `onSurface`. It was previously hardcoded,
+ * which meant any non-`onSurface` background got `onSurface` ink regardless of whether
+ * that was readable -- the play/pause button is the case that mattered: on `primary` pink
+ * in Classic80s Vox that is 3.8:1, while the MiniPlayer's same action on `secondary` is
+ * well clear. Passing the pair keeps the two screens identical by construction.
+ */
 private fun ChunkyBtn(
     icon: ImageVector,
     description: String,
     bg: Color,
     size: Dp,
+    tint: Color = MaterialTheme.colorScheme.onSurface,
     onClick: () -> Unit
 ) {
     Box {
@@ -527,7 +542,7 @@ private fun ChunkyBtn(
                 .background(bg)
                 .border(3.dp, BorderBlack, RoundedCornerShape(16.dp))
         ) {
-            Icon(icon, contentDescription = description, tint = MaterialTheme.colorScheme.onSurface)
+            Icon(icon, contentDescription = description, tint = tint)
         }
     }
 }
