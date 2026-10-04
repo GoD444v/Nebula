@@ -1,4 +1,3 @@
-HEAD
 <div align="center">
   <img src="assets/app-icons/icon1.jpg" alt="Nebula Logo" width="120"/>
 
@@ -8,7 +7,6 @@ HEAD
 </div>
 
 # Nebula
- 27110a5a8f6df538d8e5f6c8e2fa5b4c44fa1d79
 
 ## Overview
 
@@ -38,6 +36,33 @@ synced lyrics, and local playlists.
 
 ## Screenshots
 
+## Screenshots
+
+<table>
+<tr>
+<td align="center">Home Screen</td>
+<td align="center">Player Tab</td>
+<td align="center">Lyrics</td>
+</tr>
+
+<tr>
+<td><img src="assets/screenshots/home.png" width="250"/></td>
+<td><img src="assets/screenshots/player.png" width="250"/></td>
+<td><img src="assets/screenshots/lyrics.png" width="250"/></td>
+</tr>
+
+<tr>
+<td align="center">Search</td>
+<td align="center">Playlist</td>
+<td align="center">Settings</td>
+</tr>
+
+<tr>
+<td><img src="assets/screenshots/search.png" width="250"/></td>
+<td><img src="assets/screenshots/playlist.png" width="250"/></td>
+<td><img src="assets/screenshots/settings.png" width="250"/></td>
+</tr>
+</table>
 
 
 ## Technical Architecture & Stack
