@@ -147,7 +147,6 @@ architecture, modularity, and high performance.
 </details>
 
 <details>
- HEAD
 <summary><b>Personalized Home</b></summary>
 
 - **Genre Sections** — Picked at onboarding (or changed later in Settings),
