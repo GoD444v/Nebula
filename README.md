@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="assets/app-icons/icon1.jpg" alt="Nebula Logo" width="120"/>
+  <img src="assets/app-icons/icon1.jpg" alt="Nebula Logo" width="320"/>
 
   <h1>Nebula</h1>
 
