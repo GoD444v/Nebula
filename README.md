@@ -171,7 +171,6 @@ architecture, modularity, and high performance.
 
 <details>
 
-27110a5a8f6df538d8e5f6c8e2fa5b4c44fa1d79
 <summary><b>Lyrics</b></summary>
 
 - **Synced Lyrics** — Real-time synchronized lyrics from multiple providers.
