@@ -36,8 +36,6 @@ synced lyrics, and local playlists.
 
 ## Screenshots
 
-## Screenshots
-
 <table>
 <tr>
 <td align="center">Home Screen</td>
