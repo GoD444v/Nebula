@@ -44,9 +44,9 @@ synced lyrics, and local playlists.
 </tr>
 
 <tr>
-<td><img src="assets/screenshots/home.png" width="250"/></td>
-<td><img src="assets/screenshots/player.png" width="250"/></td>
-<td><img src="assets/screenshots/lyrics.png" width="250"/></td>
+<td><img src="https://raw.githubusercontent.com/GoD444v/Nebula/main/assets/Screenshots/home.png" width="250"/></td>
+<td><img src="https://raw.githubusercontent.com/GoD444v/Nebula/main/assets/Screenshots/player.png" width="250"/></td>
+<td><img src="https://raw.githubusercontent.com/GoD444v/Nebula/main/assets/Screenshots/lyrics.png" width="250"/></td>
 </tr>
 
 <tr>
@@ -56,12 +56,11 @@ synced lyrics, and local playlists.
 </tr>
 
 <tr>
-<td><img src="assets/screenshots/search.png" width="250"/></td>
-<td><img src="assets/screenshots/playlist.png" width="250"/></td>
-<td><img src="assets/screenshots/settings.png" width="250"/></td>
+<td><img src="https://raw.githubusercontent.com/GoD444v/Nebula/main/assets/Screenshots/search.png" width="250"/></td>
+<td><img src="https://raw.githubusercontent.com/GoD444v/Nebula/main/assets/Screenshots/playlist.png" width="250"/></td>
+<td><img src="https://raw.githubusercontent.com/GoD444v/Nebula/main/assets/Screenshots/settings.png" width="250"/></td>
 </tr>
 </table>
-
 
 ## Technical Architecture & Stack
 
