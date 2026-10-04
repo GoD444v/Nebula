@@ -1,0 +1,34 @@
+Nebula — Copyright (C) 2026 VIGNESH
+Project license: GNU General Public License v3 or later (GPL-3.0-or-later).
+Full text in LICENSE. Source: https://github.com/GoD444v/Nebula
+
+Third-party material ported into this repo (MIT/ISC require keeping
+their copyright + license text — full copies under licenses/):
+
+1) VoxMusic (MIT, Copyright (c) 2026 Vox Music)
+   Palette hex values + sets in ui/theme/Color.kt and ui/theme/Theme.kt,
+   and the "CUSTOMIZE TABS" string in ui/screens/TabCustomizerScreen.kt,
+   ported from VoxMusic's lib/theme/vox_theme.dart and
+   lib/screens/tab_customizer_screen.dart (Dart/Flutter, rewritten in Kotlin).
+   Full text: licenses/VOXMUSIC-MIT.txt
+
+2) kugou-lyric (ISC, github.com/kangkang520/kugou-lyric)
+   KRC decode algorithm + XOR key in data/lyrics/KugouLyrics.kt ported
+   from kugou-lyric-master (TypeScript, rewritten in Kotlin). The upstream
+   repo ships no LICENSE file; package.json declares ISC. Standard ISC
+   text preserved in licenses/KUGOU-ISC.txt.
+
+3) YouTube/InnerTube API constants (filter params, browseIds, radio IDs)
+   and public lyrics-service endpoints (Unison, LyricsPlus, LRCLIB, Kugou).
+   Protocol values any client must send; not copyrightable. No attribution
+   owed beyond this note.
+
+Library dependencies (not vendored, no source copied):
+  innertubex (GPL-3.0) via Gradle; AndroidX/Media3/Room/DataStore/Coil/Ktor
+  (Apache-2.0); JUnit (EPL-1.0, tests only). See app/build.gradle.kts.
+
+Design reference (no code copied — ideas only, no license obligation):
+  Echo-Music (GPL-3.0) informed feature/architecture choices (download
+  stack shape, search parsing, queue concepts). Verified by file-level
+  scan: zero shared Kotlin blocks. No attribution owed; listed here for
+  transparency.

@@ -5,11 +5,11 @@ plugins {
 }
 
 android {
-    namespace = "com.example.nebula"
+    namespace = "nebula.music"
     compileSdk = 37
 
     defaultConfig {
-        applicationId = "com.example.nebula"
+        applicationId = "nebula.music"
         minSdk = 24
         targetSdk = 36
         versionCode = 1

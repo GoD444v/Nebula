@@ -1,0 +1,16 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- White-only eighth note: notification small icons must be monochrome. -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M9,17.5m-3,0a3,2.6 0,1 0,6 0a3,2.6 0,1 0,-6 0" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M14.5,4h1.6V17h-1.6z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M14.5,4c3.2,0 4.4,2.2 4.4,5.2c0,-2.4 -1.2,-3.6 -4.4,-3.6z" />
+</vector>

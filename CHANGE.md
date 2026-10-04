@@ -1,168 +1,58 @@
 # Nebula — Change Log
 
-## [v0.5.0] — 2026-09-30
+## [v1.0.0] — 2026-10-03
 
-### [Done] Downloads moved to a top-right header button
-- `PlaylistsScreen.kt`: the 72dp full-width `DownloadsCard` row is gone, replaced by a
-  52dp `DownloadsIconButton` pinned to the top-right of the "Playlists" banner. The card
-  was a dead end — an icon, the word "Downloads" and a count, occupying a full row in a
-  list it did not belong to.
-- New button uses the same primitives as `PlaylistCard` (offset shadow at 4,4dp, 3px
-  `BorderBlack` border, 16dp corners, `MintTeal` fill) so it cannot drift from the
-  VoxMusic look. Not a copy of Echo's `AutoPlaylistButton`, which is a 2-per-row chip
-  with no count.
-- **Count badge**: a `NeonPink` bubble in the top-right corner showing downloads still
-  in flight, not composed at all when that count is zero. Counts QUEUED, DOWNLOADING,
-  PAUSED, RESTARTING and FAILED; excludes COMPLETED and REMOVING.
-- `DownloadViewModel.kt`: new top-level `activeDownloadCount(items)` so the rule is
-  unit-testable without a device. `DownloadItem`/`DownloadStatus` are plain data classes.
-- Tapping still opens `DownloadQueueScreen` — routing unchanged.
-- Tests: 3 new Compose cases (icon always visible, badge at 3, badge absent at 0) and
-  3 new plain JUnit cases for the count. 19 instrumented + all unit tests green.
-- **Still not delivered:** a "Downloaded" *playlist* with play/shuffle/repeat/reorder/
-  rename. Downloads live in Media3's `DownloadIndex`, which has no name, no order and
-  no artist, so reorder and rename have nowhere to live. That needs its own design.
+**Streaming & Playback**
+- YouTube Music search + streaming (songs, videos, albums, artists)
+- Grouped results: Songs → Videos → Playlists → Albums → Artists headings
+- Home feed with chips, cards, sections + per-section play/shuffle/repeat/download
+- Personalized sections: genre picks, "Because you have X" (own playlists),
+  "Because you like Y" (picked artists) — no account needed
+- Background playback via Media3 MediaSessionService
+- Mini player + full-sheet now-playing screen
+- Repeat / shuffle, queue persistence across restarts (resumes paused)
+- Shuffle-proof Previous (history stack) + notification Prev/Next buttons
+- Start Radio (queue merge + dedup)
+- Explicit badge + video-song filtering
 
----
+**Downloads & Offline**
+- Media3 DownloadService with foreground progress notification + cancel
+- Download queue screen with active-count badge
+- WiFi-only download mode (network-aware)
+- Downloaded-songs playlist with play/shuffle
+- Cache clearing
 
-## [v0.4.2] — 2026-09-30
+**Playlists & Library**
+- Local-first playlists in Room (composite key, real migrations)
+- Create / rename / delete playlists + unified Add window (New, Nebula,
+  YouTube, Spotify, Others — no accounts)
+- YouTube link import (anonymous), Nebula/Spotify/Others CSV import,
+  pasted song lists
+- CSV export + share from the detail overflow
+- Full-app backup & restore (one JSON: playlists + all settings)
+- Add-to-playlist sheet from song menu (Nebula-styled)
+- Manual reorder + sort (custom / name / date added)
+- Playlist covers via Coil with accent-tile fallback
+- Albums browser + album detail pages
+- Local on-device music scanning + playback
+- Home visibility: section master switch + per-playlist toggles
+  (Downloaded mirror off by default)
 
-### [Done] Fix: app crashed on every download start (P0)
-- `NebulaDownloadService` passed `channelNameResourceId = 0` to `DownloadService`. Its
-  `onCreate` hands that to `NotificationUtil.createNotificationChannel`, which calls
-  `getString()` on it — `getString(0)` throws `Resources$NotFoundException` and the
-  service died before Nebula's own `onCreate` body ran.
-- Fixed by passing a real resource, `R.string.nebula_download_channel_name` (new string
-  in `values/strings.xml`). The description arg stays `0` — Media3 never dereferences it.
-- Root cause: Media3's own `DownloadService` default is `0` (see its constructor), but
-  that default is only safe for its no-arg convenience constructor. Copying the literal
-  `0` into the explicit 5-arg constructor is what caused the crash.
-- Cross-checked against Echo's `ExoDownloadService`, which passes `R.string.downloading`
-  and `0` for the description only.
-- Found by the Playlists screen test, which initialises the same subsystem.
+**Onboarding**
+- 4 pages: genre picks, playlist import, live theme preview, favorite artists
+- Each page persists immediately; Skip jumps to the end, never loops
 
-### [Done] Playlists — local store, Plan A complete
-- `playlists` + `playlist_songs` tables, `NebulaDatabase` v1→v2 with a real migration
-  (no `fallbackToDestructiveMigration` — it would wipe scanned `local_songs`)
-- `PlaylistDao`: `songCount` counted in SQL, not Kotlin; duplicate add is a no-op via
-  composite PK + `IGNORE`, and the caller is told how many rows were genuinely new
-- `PlaylistsViewModel`: create / rename / delete / addSongs
-- `PlaylistsScreen`: `stubPlaylists` gone, real data, empty + populated states, Coil
-  covers with accent-tile fallback. **VoxMusic visuals preserved verbatim.**
-- 15 instrumented tests green on a physical device (API 34)
+**Lyrics**
+- Multi-provider fan-out: Kpoe/LyricsPlus, Kugou (KRC), Unison (TTML), LRCLIB
+- Tier-ranked best-pick with session cache
+- Word-by-word timings where available
+- Apple V2 default style; picker (highlight, alignment, font size, word-timings toggle)
 
-### [Todo] Manual QA — visuals
-- Nobody has eyeballed the Playlists screen since the rewrite. No test asserts styling,
-  so a regression in the 3D banner, the `N PLAYLISTS` pill, or the card border/offset
-  shadow would pass CI silently. Needs: open the Playlists tab, compare against the
-  pre-change build.
+**Customization**
+- 6 theme palettes + custom palette editor with live preview
+- Light / dark / system theme modes
+- Reorderable bottom tabs (persisted)
+- 3 switchable app icons (full density sets from real artwork)
+- VoxMusic-inspired design system (3px borders, offset shadows, chunky components)
 
 ---
-
-## [v0.4.1] — 2026-09-30
-
-### [In Progress] Downloads restructure — fix failure, notification, moved into Playlists
-- **Download failure fixed** (`NebulaDownloads.kt`): `resolveStreamUri()` now **throws** `IOException`
-  when URL resolution fails instead of returning the fake `https://nebula.local/` URL —
-  the old fallback guaranteed `UnknownHostException` and hid the real cause; throwing lets
-  Media3 retry with backoff and recovers when the network returns (Echo's exact behavior)
-- `SearchRepository.kt`: `getAudioStreamUrl()` now logs the swallowed exception (`Log.w`) —
-  failures are visible in logcat instead of silently becoming `null`
-- **Notification with cancel** (`NebulaDownloads.kt`): `enqueue()` now starts downloads via
-  `DownloadService.sendAddDownload(..., NebulaDownloadService::class.java, ...)` — this starts
-  the foreground service, so the progress notification (with its existing cancel/trash action)
-  finally appears; previously nothing ever started the service, so downloads ran headless
-- **Downloads tab removed**: `MainActivity.kt` — `"downloads"` dropped from `defaultTabs`, and
-  filtered out of the persisted `tab_order` (old installs); `TabCustomizerScreen.kt` — downloads
-  removed from `allAvailableTabs`
-- **Downloads card added to Playlists** (`PlaylistsScreen.kt`): `DownloadsCard` at the top of the
-  playlists list (same card anatomy as playlist cards, mint tile + download icon, live track count
-  from `DownloadViewModel`), opens the existing `DownloadQueueScreen`
-- Back navigation: system back / in-screen back from Downloads returns to Playlists, not Home
-- Follows Echo-Music's pattern: no Downloads nav tab, downloads surfaced inside the playlists list,
-  `sendAddDownload`-started service with a cancel action on the progress notification
-- PR #569 — answers posted on issues #527, #528, #529, #530, #461, #463, #465, #448, #447, #462, #466
-
----
-
-## [v0.4.0] — 2026-09-30
-
-### [In Progress] Playlists — spec + implementation plan written, awaiting review
-- `docs/superpowers/specs/2026-09-30-playlists-design.md` — design spec
-- `docs/superpowers/plans/2026-09-30-playlists-local-store.md` — Plan A (waves 0-1: the store)
-- Scope: **local-first**. Playlists in Nebula's own Room DB. YouTube Music sync deferred.
-- Replaces the `stubPlaylists` mockup in `PlaylistsScreen.kt` (no ViewModel, no DB, `onClick = {}`)
-- Plan: 2 new tables (`playlists`, `playlist_songs`), `version 1 → 2` with a real migration
-- Reuses existing player queue in `PlayerViewModel` — `PlayerManager` untouched
-- No Hilt, no NavHost, no new Gradle module, no new dependencies
-- Full VoxMusic visuals on `PlaylistsScreen` kept verbatim; only the data source changes
-- Plan B (waves 2-4: detail screen, queue screen, add-to-playlist) not yet specced
-- **Blocker:** repo has no `.git`. Plan Task 0 runs `git init` — commit steps and the
-  final review range both depend on it.
-- Nothing implemented yet. Plan awaits review before any code is written.
-
----
-
-## [v0.3.0] — 2026-09-30
-
-### [In Progress] Bug 1: Downloads Tab Crash
-- Moved `dm.downloadIndex.getDownloads()` from `build()` to `rehydrateDownloads()` on `Dispatchers.IO`
-- `NebulaDownloads.kt`: DB rehydration now runs on background thread via `rehydrateScope.launch {}`
-- Fixes main-thread crash when opening Downloads tab
-
-### [In Progress] Bug 2: Download Fails on Mobile Data
-- Added `ACCESS_NETWORK_STATE` permission to `AndroidManifest.xml`
-- Added `NetworkConnectivityObserver` class using `ConnectivityManager.NetworkCallback`
-- Added `DownloadPrefs` object with DataStore persistence for WiFi-only setting
-- Added `observeNetworkState()` to reactively update `DownloadManager.requirements`
-- Added WiFi-only toggle in `SettingsScreen.kt`
-- Follows Echo-Music's pattern for network-aware downloads
-
-### [In Progress] Bug 3: Icon1 Shows Android Default Logo
-- Changed `ic_icon_foreground_clear.xml` from `<shape>` to `<vector>` drawable
-- `<shape>` doesn't render correctly as adaptive icon foreground — causes fallback to Android robot
-- `<vector>` with same transparent fill renders correctly
-
-### [In Progress] Bug 4: Auto-Play on App Reopen
-- `PlayerViewModel.kt`: `restoreNowPlaying()` no longer calls `resolveAndPlay()`
-- Added `savedPositionMs` field to store position for when user presses play
-- `togglePlay()` now resumes from `savedPositionMs` when player has no media item
-- Follows Echo-Music's pattern: restore queue but stay paused
-
-### [In Progress] Bug 5: Nav Bar Customization Resets to Default
-- Added DataStore persistence for tab order (`nebula_nav`)
-- `MainActivity.kt`: reads saved tab order on launch via `LaunchedEffect`, writes on `onSave`
-- Tab order stored as comma-separated string under `tab_order` key
-
-### [In Progress] Bug 6: Theme Uses SharedPreferences (Migrate to DataStore)
-- Migrated `ThemeStore` from SharedPreferences to DataStore (`nebula_theme`)
-- `ThemeStore.init()` reads from DataStore via `runBlocking`
-- `setCustom()`, `setMode()`, `setPalette()` write to DataStore via `CoroutineScope(Dispatchers.IO)`
-- Added `androidx.datastore:datastore-preferences:1.1.1` dependency
-- API preserved — no composable changes needed
-
----
-
-## [v0.2.0] — 2026-09-30
-
-### [In Progress] Bug 5: Nav Bar Customization Resets to Default
-- Added DataStore persistence for tab order (`nebula_nav`)
-- `MainActivity.kt`: reads saved tab order on launch via `LaunchedEffect`, writes on `onSave`
-- Tab order stored as comma-separated string under `tab_order` key
-
-### [In Progress] Bug 6: Theme Uses SharedPreferences (Migrate to DataStore)
-- Migrated `ThemeStore` from SharedPreferences to DataStore (`nebula_theme`)
-- `ThemeStore.init()` reads from DataStore via `runBlocking`
-- `setCustom()`, `setMode()`, `setPalette()` write to DataStore via `CoroutineScope(Dispatchers.IO)`
-- Added `androidx.datastore:datastore-preferences:1.1.1` dependency
-- API preserved — no composable changes needed
-
----
-
-## [v0.1.0] — 2026-09-01
-
-### [Done] Initial project setup
-- Jetpack Compose + Material 3 base
-- VoxMusic-inspired design system (6 palettes + custom palette)
-- Bottom navigation with tab customization
-- Settings screen with theme/palette picker
