@@ -1,3 +1,4 @@
+HEAD
 *.iml
 .gradle
 .kotlin
@@ -18,3 +19,39 @@
 .externalNativeBuild
 .cxx
 local.properties
+=======
+# Gradle files
+.gradle/
+build/
+
+# Local configuration file (sdk path, etc)
+local.properties
+
+# Log/OS Files
+*.log
+
+# Android Studio generated files and folders
+captures/
+.externalNativeBuild/
+.cxx/
+*.aab
+*.apk
+output-metadata.json
+
+# IntelliJ
+*.iml
+.idea/
+misc.xml
+deploymentTargetDropDown.xml
+render.experimental.xml
+
+# Keystore files
+*.jks
+*.keystore
+
+# Google Services (e.g. APIs or Firebase)
+google-services.json
+
+# Android Profiling
+*.hprof
+ 27110a5a8f6df538d8e5f6c8e2fa5b4c44fa1d79

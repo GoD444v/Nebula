@@ -1,3 +1,4 @@
+HEAD
 <div align="center">
   <img src="assets/app-icons/icon1.jpg" alt="Nebula Logo" width="120"/>
 
@@ -5,6 +6,9 @@
 
   <p><b>Ad-free YouTube Music streaming with synced lyrics, offline downloads, local playlists, and a hand-built VoxMusic-inspired design.</b></p>
 </div>
+
+# Nebula
+ 27110a5a8f6df538d8e5f6c8e2fa5b4c44fa1d79
 
 ## Overview
 
@@ -34,7 +38,7 @@ synced lyrics, and local playlists.
 
 ## Screenshots
 
-_Coming soon — the UI is still settling. Build it and see._
+
 
 ## Technical Architecture & Stack
 
@@ -107,17 +111,21 @@ architecture, modularity, and high performance.
 - **Manual Reorder & Sorting** — Drag or arrow-reorder; sort by custom, name,
   or date.
 - **Downloaded Playlist** — All offline tracks in one place with play/shuffle.
+ HEAD
 - **YouTube Import** — Paste a public playlist link, no sign-in.
 - **Song-List Import** — Paste `Artist - Title` lines (Spotify copy-paste shape),
   first search hit wins each line.
 - **CSV Export + Share** — Echo-compatible CSV or plain-text share from the
   playlist overflow.
+
+ 27110a5a8f6df538d8e5f6c8e2fa5b4c44fa1d79
 - **Albums Browser** — Explore albums with detail pages.
 - **Local Media** — Scan and play on-device audio files.
 
 </details>
 
 <details>
+ HEAD
 <summary><b>Personalized Home</b></summary>
 
 - **Genre Sections** — Picked at onboarding (or changed later in Settings),
@@ -139,6 +147,8 @@ architecture, modularity, and high performance.
 </details>
 
 <details>
+
+27110a5a8f6df538d8e5f6c8e2fa5b4c44fa1d79
 <summary><b>Lyrics</b></summary>
 
 - **Synced Lyrics** — Real-time synchronized lyrics from multiple providers.
