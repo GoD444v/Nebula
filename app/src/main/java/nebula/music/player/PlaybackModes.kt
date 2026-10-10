@@ -106,4 +106,45 @@ object PlaybackModes {
         if (upNextSize > 0) return NextAction.PlayUpNext(0)
         return NextAction.Stop
     }
+
+    /**
+     * The queueIndex after [removedIndex] is deleted from a queue of [queueSize].
+     *
+     * Removing before the current song shifts it down one. Removing the current song
+     * leaves the slot refilled by the next song, so the index holds — unless it was the
+     * last song, where it steps back to the new tail. Emptying the queue yields -1.
+     */
+    fun newIndexAfterRemoval(queueSize: Int, queueIndex: Int, removedIndex: Int): Int {
+        // The size the queue will have AFTER the deletion, and the last index that size
+        // can address. These are different numbers: a queue of 4 becomes 3, whose highest
+        // valid index is 2.
+        val sizeAfter = queueSize - 1
+        if (sizeAfter <= 0) return -1
+        return when {
+            removedIndex < queueIndex -> queueIndex - 1
+            removedIndex == queueIndex -> minOf(queueIndex, sizeAfter - 1)
+            else -> queueIndex
+        }
+    }
+
+    /**
+     * [history] rewritten for the deletion of [removedIndex] from a queue that now holds
+     * [queueSizeAfterRemoval] songs.
+     *
+     * Entries before the removed slot still point where they did. The entry ON the removed
+     * slot is dropped — it names a song that is gone. Entries after it shift down by one.
+     * Anything past the new end is dropped: PlayerViewModel.previous() pops history before
+     * it bounds-checks the index, so a stale entry is swallowed silently and lost.
+     */
+    fun repairHistory(
+        history: List<Int>,
+        queueSizeAfterRemoval: Int,
+        removedIndex: Int
+    ): List<Int> = history.mapNotNull { entry ->
+        when {
+            entry == removedIndex -> null
+            entry > removedIndex -> (entry - 1).takeIf { it in 0 until queueSizeAfterRemoval }
+            else -> entry.takeIf { it in 0 until queueSizeAfterRemoval }
+        }
+    }
 }
