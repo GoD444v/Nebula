@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SkipNext
@@ -42,7 +43,7 @@ import nebula.music.viewmodel.PlayerViewModel
 // ponytail: extracted from MainActivity verbatim so the call site stays one line
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun MiniPlayer(vm: PlayerViewModel, onOpen: () -> Unit) {
+fun MiniPlayer(vm: PlayerViewModel, onOpen: () -> Unit, onOpenQueue: () -> Unit = {}) {
     val onSurface = MaterialTheme.colorScheme.onSurface
     val surface = MaterialTheme.colorScheme.surface
 
@@ -135,6 +136,14 @@ fun MiniPlayer(vm: PlayerViewModel, onOpen: () -> Unit) {
                         modifier = Modifier.size(24.dp)
                     )
                 }
+            }
+            IconButton(onClick = onOpenQueue, modifier = Modifier.size(40.dp)) {
+                Icon(
+                    Icons.AutoMirrored.Filled.QueueMusic,
+                    contentDescription = "Queue",
+                    tint = onSurface,
+                    modifier = Modifier.size(22.dp)
+                )
             }
             IconButton(onClick = { vm.next() }, modifier = Modifier.size(40.dp)) {
                 Icon(Icons.Filled.SkipNext, contentDescription = "Next", tint = onSurface, modifier = Modifier.size(22.dp))

@@ -72,6 +72,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import nebula.music.ui.components.MiniPlayer
+import nebula.music.ui.components.QueueSheet
 import nebula.music.ui.screens.AlbumDetailScreen
 import nebula.music.ui.screens.FullSheetPlayer
 import nebula.music.ui.screens.download.DownloadQueueScreen
@@ -125,6 +126,9 @@ class MainActivity : ComponentActivity() {
             val context = androidx.compose.ui.platform.LocalContext.current
             var screen by remember { mutableStateOf("home") }
             var showSheet by remember { mutableStateOf(false) }
+            // Queue lives at the Box level, not inside FullSheetPlayer, so it can open
+            // from the mini player on any tab as well as from the full player.
+            var showQueue by remember { mutableStateOf(false) }
             var showTabCustomizer by remember { mutableStateOf(false) }
             var showOnboarding by remember { mutableStateOf(!OnboardingStore.isDone) }
             // "downloads" is intentionally absent: it is no longer a nav tab —
@@ -331,7 +335,7 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
                             if (vm.currentVideoId.isNotBlank()) {
-                                MiniPlayer(vm = vm, onOpen = { showSheet = true })
+                                MiniPlayer(vm = vm, onOpen = { showSheet = true }, onOpenQueue = { showQueue = true })
                             }
                             AppNavBar(
                                 current = screen,
@@ -343,8 +347,14 @@ class MainActivity : ComponentActivity() {
                             FullSheetPlayer(
                                 vm = vm,
                                 onClose = { showSheet = false },
-                                playlistsVm = playlistsVm
+                                playlistsVm = playlistsVm,
+                                onOpenQueue = { showQueue = true }
                             )
+                        }
+                        // After FullSheetPlayer so it composites on top of it when both
+                        // are open (queue launched from the full player).
+                        if (showQueue) {
+                            QueueSheet(vm = vm, onDismiss = { showQueue = false })
                         }
                     }
                 }

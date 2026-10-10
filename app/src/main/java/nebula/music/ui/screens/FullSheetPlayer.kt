@@ -24,6 +24,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Fullscreen
@@ -84,9 +85,9 @@ import kotlinx.coroutines.launch
 fun FullSheetPlayer(
     vm: PlayerViewModel,
     onClose: () -> Unit,
-    playlistsVm: PlaylistsViewModel? = null
+    playlistsVm: PlaylistsViewModel? = null,
+    onOpenQueue: () -> Unit = {}
 ) {
-    var showQueue by remember { mutableStateOf(false) }
     var showSongMenu by remember { mutableStateOf(false) }
     var addingToPlaylist by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
@@ -453,6 +454,11 @@ fun FullSheetPlayer(
 
         Spacer(modifier = Modifier.height(16.dp))
 
+        // The queue list that used to live here was destructive: tapping a row called
+        // playYouTubeSong -> play() -> queue.clear(); history.clear(), so every tap deleted
+        // the entire queue. It also could not scroll independently (a non-lazy forEach inside
+        // this verticalScroll Column) and highlighted by videoId, lighting up every copy of a
+        // duplicated song. Replaced by the shared QueueSheet.
         Box {
             Box(
                 modifier = Modifier
@@ -462,7 +468,7 @@ fun FullSheetPlayer(
                     .background(MaterialTheme.colorScheme.outline)
                     .padding(horizontal = 16.dp, vertical = 10.dp)
             ) {
-                Text("Queue (${vm.queueList.size})", color = BorderBlack)
+                Text("Up Next (${vm.queueList.size})", color = BorderBlack)
             }
             Row(
                 modifier = Modifier
@@ -470,51 +476,22 @@ fun FullSheetPlayer(
                     .clip(RoundedCornerShape(14.dp))
                     .background(MaterialTheme.colorScheme.surface)
                     .border(3.dp, BorderBlack, RoundedCornerShape(14.dp))
-                    .clickable { showQueue = !showQueue }
+                    .clickable { onOpenQueue() }
                     .padding(horizontal = 16.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(Icons.Filled.QueueMusic, contentDescription = "Queue", tint = MaterialTheme.colorScheme.onSurface)
+                Icon(
+                    Icons.AutoMirrored.Filled.QueueMusic,
+                    contentDescription = "Queue",
+                    tint = MaterialTheme.colorScheme.onSurface
+                )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    "Queue (${vm.queueList.size})",
+                    "Up Next (${vm.queueList.size})",
                     fontWeight = FontWeight.Black,
                     fontSize = 14.sp,
                     color = MaterialTheme.colorScheme.onSurface
                 )
-            }
-        }
-
-        if (showQueue) {
-            Spacer(modifier = Modifier.height(8.dp))
-            vm.queueList.forEach { item ->
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(12.dp))
-                        .clickable {
-                            vm.playYouTubeSong(item.videoId, item.title, item.artist, item.thumbnailUrl)
-                        }
-                        .padding(horizontal = 8.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            item.title,
-                            fontWeight = FontWeight.Black,
-                            fontSize = 13.sp,
-                            maxLines = 1,
-                            color = if (item.videoId == vm.currentVideoId) MaterialTheme.colorScheme.primary
-                            else MaterialTheme.colorScheme.onBackground
-                        )
-                        Text(
-                            item.artist,
-                            fontSize = 11.sp,
-                            maxLines = 1,
-                            color = MaterialTheme.colorScheme.onBackground
-                        )
-                    }
-                }
             }
         }
 
