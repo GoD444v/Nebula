@@ -149,6 +149,19 @@ class PlayerManager {
         controller?.shuffleModeEnabled = enabled
     }
 
+    /**
+     * Drops the current item so nothing resumes after the queue empties.
+     *
+     * `pauseAudio()` alone leaves the MediaItem in the session, and PlayerViewModel's
+     * togglePlay() treats a non-null currentMediaItem() as resumable — so emptying the
+     * queue and pressing Play would resume a song the user had just deleted.
+     */
+    fun stopPlayback() {
+        controller?.stop()
+        controller?.clearMediaItems()
+        pendingItem = null
+    }
+
     fun releasePlayer() {
         controller?.release()
         controller = null

@@ -55,6 +55,11 @@ class PlayerViewModel : ViewModel() {
         private set
     var queueList by mutableStateOf<List<SearchResult>>(emptyList())
         private set
+    // The index of the playing song inside `queue`. Public state, not a getter, so the
+    // queue screen can highlight by POSITION: comparing videoId lights up every copy of a
+    // duplicated song, which radio and repeat-heavy playlists both produce.
+    var currentQueueIndex by mutableStateOf(-1)
+        private set
     var positionMs by mutableStateOf(0L)
         private set
     // Position saved on restore, used when the user presses play to resume.
@@ -97,6 +102,18 @@ class PlayerViewModel : ViewModel() {
     // Fresh queue = no past: every play* entry below clears it.
     // ponytail: unbounded deque; a session holds hundreds of entries max, a cap when it matters.
     private val history = ArrayDeque<Int>()
+    /**
+     * Publishes the queue and the playing index together.
+     *
+     * `queueList` and `currentQueueIndex` are two independent mutableStateOf fields. Written
+     * separately, Compose can recompose between them and paint one frame where the list is
+     * new but the highlight is stale. Both writes land in the same frame, so Compose
+     * coalesces them. Every queue mutation calls this; nothing assigns `queueList` directly.
+     */
+    private fun publishQueue() {
+        queueList = queue.toList()
+        currentQueueIndex = queueIndex
+    }
     private var ticker: Job? = null
     private var lyricsTicker: Job? = null
 
@@ -179,7 +196,7 @@ class PlayerViewModel : ViewModel() {
                     queue.add(SearchResult(s.videoId, s.title, s.artist, s.thumbnailUrl))
                 }
                 queueIndex = state.currentIndex
-                queueList = queue.toList()
+                publishQueue()
                 val current = queue[queueIndex]
                 currentVideoId = current.videoId
                 currentSongTitle = current.title
@@ -198,7 +215,7 @@ class PlayerViewModel : ViewModel() {
         queue.clear()
         queue.add(item)
         queueIndex = 0
-        queueList = queue.toList()
+        publishQueue()
         currentVideoId = item.videoId
         currentSongTitle = item.title
         currentArtist = item.artist
@@ -244,7 +261,7 @@ class PlayerViewModel : ViewModel() {
         history.clear()
         queue.add(item)
         queueIndex = 0
-        queueList = queue.toList()
+        publishQueue()
         resolveAndPlay(item)
     }
 
@@ -259,7 +276,7 @@ class PlayerViewModel : ViewModel() {
         history.clear()
         queue.addAll(items)
         queueIndex = 0
-        queueList = queue.toList()
+        publishQueue()
         resolveAndPlay(queue[0])
     }
 
@@ -278,7 +295,7 @@ class PlayerViewModel : ViewModel() {
         history.clear()
         queue.add(item)
         queueIndex = 0
-        queueList = queue.toList()
+        publishQueue()
         // startRadio() reads currentSong(), which is the queue head — so the item must be
         // in place first. Calling it before this seeded the radio off the *previous* song.
         startRadio()
@@ -301,7 +318,7 @@ class PlayerViewModel : ViewModel() {
         // [rest] left the queue empty, so tapping a row emptied the player instead.
         queue.addAll(rest.filter { it.videoId != item.videoId })
         queueIndex = 0
-        queueList = queue.toList()
+        publishQueue()
         resolveAndPlay(item)
     }
 
@@ -321,7 +338,7 @@ fun playNext(item: SearchResult) {
     }
     val at = (queueIndex + 1).coerceIn(0, queue.size)
     queue.add(at, item)
-    queueList = queue.toList()
+    publishQueue()
 }
 
 /** Queues [item] at the end of the list. */
@@ -331,14 +348,88 @@ fun addToQueue(item: SearchResult) {
         return
     }
     queue.add(item)
-    queueList = queue.toList()
+    publishQueue()
 }
+
+    fun addToQueue(items: List<SearchResult>) {
+        items.forEach { addToQueue(it) }
+    }
+
+    /**
+     * Plays the queue entry at [index] without disturbing anything else in the queue.
+     *
+     * Replaces the inline queue list in FullSheetPlayer, which called playYouTubeSong ->
+     * play() -> queue.clear(); history.clear(). Tapping a queue row deleted the entire
+     * queue. Tapping the row that is already playing toggles play/pause instead of
+     * restarting the song from zero.
+     */
+    fun playAtQueueIndex(index: Int) {
+        val item = queue.getOrNull(index) ?: return
+        if (index == queueIndex) {
+            togglePlay()
+            return
+        }
+        history.addLast(queueIndex)
+        queueIndex = index
+        publishQueue()
+        resolveAndPlay(item)
+    }
+
+    /**
+     * Removes the queue entry at [index].
+     *
+     * Repair happens in the same operation as the deletion, because `history` holds
+     * INDICES: leaving it stale would make previous() land on the wrong song with no
+     * visible cause. Removing the song that is playing advances into the vacated slot;
+     * removing any other song does not restart playback. Emptying the queue stops playback
+     * and clears the header fields, which is what makes MainActivity hide the MiniPlayer.
+     */
+    fun removeFromQueue(index: Int) {
+        if (index !in queue.indices) return
+        val wasCurrent = index == queueIndex
+        val repaired = PlaybackModes.repairHistory(
+            history = history.toList(),
+            queueSizeAfterRemoval = queue.size - 1,
+            removedIndex = index
+        )
+        queue.removeAt(index)
+        history.clear()
+        history.addAll(repaired)
+        queueIndex = PlaybackModes.newIndexAfterRemoval(queue.size, queueIndex, index)
+        publishQueue()
+        when {
+            queue.isEmpty() -> {
+                playerManager.stopPlayback()
+                currentVideoId = ""
+                currentSongTitle = "Select a song to play"
+                currentArtist = ""
+                isPlaying = false
+                isLoading = false
+                savedPositionMs = 0L
+                _lyrics.value = null
+                _lyricIndex.value = -1
+                lyricsJob?.cancel()
+                _isLoadingLyrics.value = false
+            }
+            wasCurrent -> queue.getOrNull(queueIndex)?.let { resolveAndPlay(it) }
+        }
+    }
+
+    fun removeFromQueue(items: List<SearchResult>) {
+        // Highest index first: deleting low to high shifts every later index.
+        items.mapNotNull { item ->
+            queue.indexOfFirst { it.videoId == item.videoId }.takeIf { it >= 0 }
+        }
+            .distinct()
+            .sortedDescending()
+            .forEach { removeFromQueue(it) }
+    }
 
 fun playQueueItem(item: SearchResult) {
         queue.add(item)
         history.clear()
         queueIndex = queue.lastIndex
-        queueList = queue.toList()
+        publishQueue()
         resolveAndPlay(item)
     }
 
@@ -357,7 +448,7 @@ fun playQueueItem(item: SearchResult) {
                 history.addLast(queueIndex)
                 queue.add(item)
                 queueIndex = queue.lastIndex
-                queueList = queue.toList()
+                publishQueue()
                 resolveAndPlay(item)
             }
             NextAction.ReplayCurrent -> queue.getOrNull(queueIndex)?.let { resolveAndPlay(it) }
@@ -427,6 +518,9 @@ fun playQueueItem(item: SearchResult) {
     // Echo's Start Radio: fresh related songs replace everything after the
     // current one. Empty or failed fetch leaves the queue untouched.
     fun startRadio() {
+        // Explicit rather than leaning on the getOrNull below: an emptied queue leaves
+        // queueIndex at -1, and mergeRadio would compute subList(0, 0) — safe, meaningless.
+        if (queueIndex < 0) return
         val current = queue.getOrNull(queueIndex) ?: return
         isLoadingRadio = true
         viewModelScope.launch {
@@ -445,7 +539,7 @@ fun playQueueItem(item: SearchResult) {
             val byId = (queue + radio).associateBy { it.videoId }
             queue.clear()
             merged.forEach { id -> byId[id]?.let(queue::add) }
-            queueList = queue.toList()
+            publishQueue()
             upNext = emptyList()
         }
     }
