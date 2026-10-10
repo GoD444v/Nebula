@@ -114,11 +114,15 @@ object PlaybackModes {
      * leaves the slot refilled by the next song, so the index holds — unless it was the
      * last song, where it steps back to the new tail. Emptying the queue yields -1.
      */
-    fun newIndexAfterRemoval(queueSize: Int, queueIndex: Int, removedIndex: Int): Int {
+    fun newIndexAfterRemoval(
+        queueSizeBeforeRemoval: Int,
+        queueIndex: Int,
+        removedIndex: Int
+    ): Int {
         // The size the queue will have AFTER the deletion, and the last index that size
         // can address. These are different numbers: a queue of 4 becomes 3, whose highest
         // valid index is 2.
-        val sizeAfter = queueSize - 1
+        val sizeAfter = queueSizeBeforeRemoval - 1
         if (sizeAfter <= 0) return -1
         return when {
             removedIndex < queueIndex -> queueIndex - 1

@@ -115,6 +115,9 @@ class PlayerViewModel : ViewModel() {
         currentQueueIndex = queueIndex
     }
     private var ticker: Job? = null
+    // The stream-URL resolution. Tracked like lyricsJob so a superseded fetch cannot land
+    // late and start audio for a song the user has since skipped or deleted.
+    private var streamJob: Job? = null
     private var lyricsTicker: Job? = null
 
     /**
@@ -351,10 +354,6 @@ fun addToQueue(item: SearchResult) {
     publishQueue()
 }
 
-    fun addToQueue(items: List<SearchResult>) {
-        items.forEach { addToQueue(it) }
-    }
-
     /**
      * Plays the queue entry at [index] without disturbing anything else in the queue.
      *
@@ -387,19 +386,28 @@ fun addToQueue(item: SearchResult) {
     fun removeFromQueue(index: Int) {
         if (index !in queue.indices) return
         val wasCurrent = index == queueIndex
+        // Both helpers take the PRE-removal size and derive the post-removal size
+        // themselves. Captured before removeAt, because reading queue.size afterwards
+        // passed the already-shortened size: removing the playing song of a 4-song queue
+        // then computed sizeAfter=2 and rewound to index 1, replaying the previous track
+        // and skipping the song that had taken its slot.
+        val sizeBefore = queue.size
         val repaired = PlaybackModes.repairHistory(
             history = history.toList(),
-            queueSizeAfterRemoval = queue.size - 1,
+            queueSizeAfterRemoval = sizeBefore - 1,
             removedIndex = index
         )
         queue.removeAt(index)
         history.clear()
         history.addAll(repaired)
-        queueIndex = PlaybackModes.newIndexAfterRemoval(queue.size, queueIndex, index)
+        queueIndex = PlaybackModes.newIndexAfterRemoval(sizeBefore, queueIndex, index)
         publishQueue()
         when {
             queue.isEmpty() -> {
                 playerManager.stopPlayback()
+                // An in-flight URL resolution for the song just deleted would otherwise
+                // land after stopPlayback and start audio with no mini player showing.
+                streamJob?.cancel()
                 currentVideoId = ""
                 currentSongTitle = "Select a song to play"
                 currentArtist = ""
@@ -415,17 +423,7 @@ fun addToQueue(item: SearchResult) {
         }
     }
 
-    fun removeFromQueue(items: List<SearchResult>) {
-        // Highest index first: deleting low to high shifts every later index.
-        items.mapNotNull { item ->
-            queue.indexOfFirst { it.videoId == item.videoId }.takeIf { it >= 0 }
-        }
-            .distinct()
-            .sortedDescending()
-            .forEach { removeFromQueue(it) }
-    }
-
-fun playQueueItem(item: SearchResult) {
+    fun playQueueItem(item: SearchResult) {
         queue.add(item)
         history.clear()
         queueIndex = queue.lastIndex
@@ -438,6 +436,10 @@ fun playQueueItem(item: SearchResult) {
             is NextAction.PlayQueue -> {
                 history.addLast(queueIndex)
                 queueIndex = action.index
+                // The queue list itself is unchanged here — only which entry is current.
+                // Without this the queue sheet's highlight stays frozen on the old row
+                // forever, because currentQueueIndex is written only by publishQueue().
+                publishQueue()
                 resolveAndPlay(queue[queueIndex])
             }
             is NextAction.PlayUpNext -> {
@@ -475,9 +477,11 @@ fun playQueueItem(item: SearchResult) {
         val back = history.removeLastOrNull()
         if (back != null && back != queueIndex) {
             queueIndex = back
+            publishQueue()
             queue.getOrNull(queueIndex)?.let { resolveAndPlay(it) }
         } else if (queueIndex > 0) {
             queueIndex--
+            publishQueue()
             resolveAndPlay(queue[queueIndex])
         }
     }
@@ -580,7 +584,8 @@ fun playQueueItem(item: SearchResult) {
                 if (lyricsJob == coroutineContext[Job]) _isLoadingLyrics.value = false
             }
         }
-        viewModelScope.launch {
+        streamJob?.cancel()
+        streamJob = viewModelScope.launch {
             // A downloaded song does not need a stream URL to start: its bytes are already
             // in the download cache under the bare videoId, which is the custom cache key
             // the player now uses. Resolving a URL first would put a hard network

@@ -144,31 +144,61 @@ class PlaybackModeTest {
     @Test
     fun removal_before_current_shifts_index_down() {
         assertEquals(1, PlaybackModes.newIndexAfterRemoval(
-            queueSize = 4, queueIndex = 2, removedIndex = 0))
+            queueSizeBeforeRemoval = 4, queueIndex = 2, removedIndex = 0))
     }
 
     @Test
     fun removal_after_current_leaves_index_alone() {
         assertEquals(1, PlaybackModes.newIndexAfterRemoval(
-            queueSize = 4, queueIndex = 1, removedIndex = 3))
+            queueSizeBeforeRemoval = 4, queueIndex = 1, removedIndex = 3))
     }
 
     @Test
     fun removal_of_current_keeps_index_slot_refilled() {
         assertEquals(2, PlaybackModes.newIndexAfterRemoval(
-            queueSize = 4, queueIndex = 2, removedIndex = 2))
+            queueSizeBeforeRemoval = 4, queueIndex = 2, removedIndex = 2))
     }
 
     @Test
     fun removal_of_last_playing_song_steps_index_back() {
         assertEquals(2, PlaybackModes.newIndexAfterRemoval(
-            queueSize = 4, queueIndex = 3, removedIndex = 3))
+            queueSizeBeforeRemoval = 4, queueIndex = 3, removedIndex = 3))
     }
 
     @Test
     fun removal_of_only_song_yields_minus_one() {
         assertEquals(-1, PlaybackModes.newIndexAfterRemoval(
-            queueSize = 1, queueIndex = 0, removedIndex = 0))
+            queueSizeBeforeRemoval = 1, queueIndex = 0, removedIndex = 0))
+    }
+
+    // The two-song case is where passing the POST-removal size instead of the pre-removal
+    // one does the most damage: sizeAfter lands on 0, the empty-queue guard fires, and the
+    // index becomes -1 while a song is still queued. Deleting the playing song of [A,B]
+    // must leave index 0 on B, not -1.
+    @Test
+    fun two_song_queue_removing_the_playing_song_keeps_the_other_indexed() {
+        assertEquals(0, PlaybackModes.newIndexAfterRemoval(
+            queueSizeBeforeRemoval = 2, queueIndex = 0, removedIndex = 0))
+    }
+
+    @Test
+    fun two_song_queue_removing_the_playing_tail_keeps_the_other_indexed() {
+        assertEquals(0, PlaybackModes.newIndexAfterRemoval(
+            queueSizeBeforeRemoval = 2, queueIndex = 1, removedIndex = 1))
+    }
+
+    @Test
+    fun two_song_queue_removing_the_other_song_leaves_the_playing_index() {
+        assertEquals(0, PlaybackModes.newIndexAfterRemoval(
+            queueSizeBeforeRemoval = 2, queueIndex = 0, removedIndex = 1))
+    }
+
+    // Removing a playing song from a 4-song queue must land on the song that took its
+    // slot (index 2 -> D), never one further back (index 1 -> B).
+    @Test
+    fun four_song_queue_removing_the_playing_song_advances_not_rewinds() {
+        assertEquals(2, PlaybackModes.newIndexAfterRemoval(
+            queueSizeBeforeRemoval = 4, queueIndex = 2, removedIndex = 2))
     }
 
     @Test
