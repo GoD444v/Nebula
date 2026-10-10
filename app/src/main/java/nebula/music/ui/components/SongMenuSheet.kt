@@ -20,6 +20,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Album
 import androidx.compose.material.icons.filled.ArrowDownward
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Info
@@ -82,7 +83,11 @@ fun SongMenuSheet(
     onViewArtist: () -> Unit = {},
     onViewAlbum: () -> Unit = {},
     onRefetch: () -> Unit = {},
-    onShowInfo: () -> Unit = {}
+    onShowInfo: () -> Unit = {},
+    // Null = this menu has no queue context, so no row is composed. A defaulted no-op
+    // lambda would still draw a clickable row that silently does nothing — which is the
+    // exact failure the file header says is worse than a missing item.
+    onRemoveFromQueue: (() -> Unit)? = null
 ) {
     ChunkyWindow(
         title = song.title.ifBlank { "Song options" },
@@ -110,6 +115,14 @@ fun SongMenuSheet(
             // after the playing track, the other appends.
             MenuItem("Play next", Icons.Filled.PlaylistPlay, onPlayNext)
             MenuItem("Add to queue", Icons.Filled.QueueMusic, onAddToQueue)
+            if (onRemoveFromQueue != null) {
+                MenuItem(
+                    "Remove from queue",
+                    Icons.Filled.Close,
+                    onRemoveFromQueue,
+                    destructive = true
+                )
+            }
 
             HorizontalDivider(
                 modifier = Modifier.padding(vertical = 6.dp),
