@@ -83,9 +83,7 @@ architecture, modularity, and high performance.
 
 **Upcoming Features**
 
-> - YouTube Music account sync (library, liked songs, playlists)
 > - Podcast support
-> - Crossfade between tracks
 
 <details>
 <summary><b>Streaming & Playback</b></summary>
