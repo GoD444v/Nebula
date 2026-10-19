@@ -1,0 +1,146 @@
+warning: in the working copy of 'app/main/java/nebula/music/player/EqDspProcessor.kt', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'app/src/main/java/nebula/music/player/EqDspProcessor.kt', LF will be replaced by CRLF the next time Git touches it
+[1mdiff --git a/app/main/java/nebula/music/player/EqDspProcessor.kt b/app/src/main/java/nebula/music/player/EqDspProcessor.kt[m
+[1mindex 5bebcf0..f12d607 100644[m
+[1m--- a/app/main/java/nebula/music/player/EqDspProcessor.kt[m
+[1m+++ b/app/src/main/java/nebula/music/player/EqDspProcessor.kt[m
+[36m@@ -1,8 +1,9 @@[m
+ package nebula.music.player[m
+ [m
+[31m-import androidx.media3.common.audio.AudioProcessor[m
+[32m+[m[32mimport androidx.media3.common.C[m
+[32m+[m[32mimport androidx.media3.common.audio.AudioProcessor.AudioFormat[m
+[32m+[m[32mimport androidx.media3.common.audio.AudioProcessor.UnhandledAudioFormatException[m
+ import androidx.media3.common.audio.BaseAudioProcessor[m
+[31m-import androidx.media3.common.util.UnhandledAudioFormatException[m
+ import java.nio.ByteBuffer[m
+ import java.nio.ByteOrder[m
+ import kotlin.math.PI[m
+[36m@@ -11,30 +12,30 @@[m [mimport kotlin.math.pow[m
+ import kotlin.math.sin[m
+ [m
+ /**[m
+[31m- * Five-band peaking EQ as a Media3 [AudioProcessor], applied to the decoded PCM[m
+[32m+[m[32m * Five-band peaking EQ as a Media3 AudioProcessor, applied to the decoded PCM[m
+  * stream before it reaches the speaker.[m
+  *[m
+[31m- * Why not android.media.audiofx.Equalizer: on this device the OS effect engine[m
+[31m- * refused it outright ("Cannot initialize effect engine ... Error: -3"), so the[m
+[31m- * system EQ is not available on every phone Nebula runs on. Filtering the samples[m
+[31m- * ourselves needs no effect engine at all - the DSP runs in the player's own[m
+[31m- * audio pipeline and behaves identically everywhere.[m
+[32m+[m[32m * Why not android.media.audiofx.Equalizer: on the test device the OS effect[m
+[32m+[m[32m * engine refused it outright ("Cannot initialize effect engine ... Error: -3"),[m
+[32m+[m[32m * so the system EQ is simply not available on every phone. Filtering the samples[m
+[32m+[m[32m * ourselves needs no effect engine - the DSP runs inside the player's own audio[m
+[32m+[m[32m * pipeline and behaves identically everywhere.[m
+  *[m
+[31m- * The math is the standard RBJ "peaking EQ" biquad: for each band a second-order[m
+[31m- * section with gain at [freqHz] and -3 dB points roughly an octave away. Cascading[m
+[31m- * five of those is a graphic EQ.[m
+[32m+[m[32m * The math is the standard RBJ peaking-EQ biquad: per band, a second-order[m
+[32m+[m[32m * section with the requested gain at the band centre, roughly an octave wide.[m
+[32m+[m[32m * Cascading five of those is a graphic EQ.[m
+  *[m
+[31m- * Coefficients depend on the sample rate, which is only known in [configure], and[m
+[31m- * on the gains, which the UI can change at any time. Both are handled here: the[m
+[31m- * sample rate comes from configure(), and gains are pushed as an immutable[m
+[31m- * snapshot ([setGains]) that the processing loop picks up via a version counter,[m
+[31m- * so no locking is needed on the audio thread.[m
+[32m+[m[32m * Coefficients depend on the sample rate (known only in [configure]) and on the[m
+[32m+[m[32m * gains (changeable from the UI at any time). Both are handled without locking:[m
+[32m+[m[32m * the sample rate comes from configure(), and gains arrive as an immutable[m
+[32m+[m[32m * snapshot ([setGains]) that the audio thread picks up through a version counter.[m
+  */[m
+[31m-class EqDspProcessor([m
+[31m-    private val bandFrequencies: IntArray[m
+[31m-) : BaseAudioProcessor() {[m
+[32m+[m[32mclass EqDspProcessor(private val bandFrequencies: IntArray) : BaseAudioProcessor() {[m
+ [m
+[31m-    /** 5 bands, Q≈1.41 (octave spacing), so neighbouring bands barely overlap. */[m
+[32m+[m[32m    /** Q for octave-spaced peaking bands, so neighbours barely overlap. */[m
+[32m+[m[32m    private val q = 1.41f[m
+[32m+[m
+[32m+[m[32m    /** Second-order section state, one per channel per band. */[m
+     private class Biquad {[m
+         var b0 = 1f[m
+         var b1 = 0f[m
+[36m@@ -46,153 +47,141 @@[m [mclass EqDspProcessor([m
+         var y1 = 0f[m
+         var y2 = 0f[m
+ [m
+[31m-        fun reset() {[m
+[32m+[m[32m        fun clearState() {[m
+             x1 = 0f; x2 = 0f; y1 = 0f; y2 = 0f[m
+         }[m
+     }[m
+ [m
+     private var sampleRate = 0[m
+     private var channelCount = 0[m
+[31m-    private var pcmEncoding = 0[m
+[32m+[m[32m    private var pcmEncoding = C.ENCODING_PCM_16BIT[m
+ [m
+[31m-    /** One filter per band per channel. */[m
+[31m-    private var filters: Array<Biquad> = emptyArray()[m
+[31m-    private var filterIndex = 0[m
+[32m+[m[32m    private var filters: Array<Array<Biquad>> = emptyArray()[m
+ [m
+     @Volatile[m
+     private var gainsDb: FloatArray = FloatArray(bandFrequencies.size)[m
+ [m
+     @Volatile[m
+[31m-    private var gainsVersion: Int = 0[m
+[31m-[m
+[31m-    private var appliedVersion: Int = -1[m
+[32m+[m[32m    private var gainsVersion = 0[m
+ [m
+[31m-    /** All bands at 0 dB means an all-pass-through, so the processor can idle. */[m
+[31m-    private var bypass: Boolean = true[m
+[32m+[m[32m    private var appliedVersion = -1[m
+[32m+[m[32m    private var bypass = true[m
+[32m+[m[32m    /** Format we cannot filter - copy through rather than break playback. */[m
+[32m+[m[32m    private var passthrough = false[m
+ [m
+[31m-    /**[m
+[31m-     * New gains, in dB, one per band. Call from any thread - typically the UI.[m
+[31m-     */[m
+[32m+[m[32m    /** New per-band gains in dB. Safe to call from any thread (the UI does). */[m
+     fun setGains(db: FloatArray) {[m
+         if (db.size != bandFrequencies.size) return[m
+         gainsDb = db.copyOf()[m
+         gainsVersion++[m
+     }[m
+ [m
+[31m-    /**[m
+[31m-     * True when every band is flat, which is the common case and worth skipping.[m
+[31m-     * Read by the audio thread via the version counter, never a stale flag.[m
+[31m-     */[m
+[31m-    private fun isFlat(db: FloatArray): Boolean {[m
+[31m-        for (g in db) if (g != 0f) return false[m
+[31m-        return true[m
+[31m-    }[m
+[31m-[m
+[31m-    @Throws(UnhandledAudioFormatException::class)[m
+[31m-    override fun onConfigure(inputAudioFormat: androidx.media3.common.audio.AudioFormat): androidx.media3.common.audio.AudioFormat {[m
+[32m+[m[32m    override fun onConfigure(inputAudioFormat: AudioFormat): AudioFormat {[m
+         sampleRate = inputAudioFormat.sampleRate[m
+         channelCount = inputAudioFormat.channelCount[m
+         pcmEncoding = inputAudioFormat.encoding[m
+[31m-        if (sampleRate <= 0) throw UnhandledAudioFormatException(inputAudioFormat)[m
+[31m-        if (pcmEncoding != C.PCM_16BIT && pcmEncoding != C.PCM_FLOAT) {[m
+[31m-            // 24-in-32 and raw 32-bit would need their own unpacking loop; the[m
+[31m-            // default sink only ever hands us these two.[m
+[31m-            throw UnhandledAudioFormatException(inputAudioFormat)[m
+[31m-        }[m
+[31m-        filters = Array(channelCount) { ch ->[m
+[31m-            Array(bandFrequencies.size) { Biquad().also { resetState(ch) } }[m
+[31m-        }[m
+[31m-        filterIndex = 0[m
+[32m+[m[32m        // NEVER throw here. An UnhandledAudioFormatException kills the whole audio[m
+[32m+[m[32m        // renderer, which surfaces as "couldn't load audio" and kills playback[m
+[32m+[m[32m        // outright - the EQ losing its effect is a far better failure than the[m
+[32m+[m[32m        // song refusing to play. Anything we cannot filter passes straight through.[m
+[32m+[m[32m        passthrough = sampleRate <= 0 ||[m
+[32m+[m[32m                (pcmEncoding != C.ENCODING_PCM_16BIT && pcmEncoding != C.ENCODING_PCM_FLOAT)[m
+[32m+[m[41m        [m
+[32m+[m[32m        filters = Array(channelCount) { Array(bandFrequencies.size) { Biquad() }
