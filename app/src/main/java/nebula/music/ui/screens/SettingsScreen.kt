@@ -8,14 +8,22 @@ import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
@@ -33,16 +41,27 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Equalizer
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.PhoneAndroid
+import androidx.compose.material.icons.filled.Autorenew
+import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Waves
+import androidx.compose.material.icons.filled.AccountCircle
+import androidx.compose.material.icons.filled.Brush
+import androidx.compose.material.icons.filled.Lyrics
 import androidx.compose.material.icons.filled.QueueMusic
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Lightbulb
 import androidx.compose.material.icons.filled.BugReport
+import androidx.compose.material.icons.filled.Equalizer
 import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
@@ -68,6 +87,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -77,9 +97,11 @@ import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.first
 import androidx.lifecycle.viewmodel.compose.viewModel
 import nebula.music.data.BackupManager
+import nebula.music.data.BlockedSongs
 import nebula.music.data.GenreItem
 import nebula.music.data.HomePrefs
 import nebula.music.data.SearchRepository
+import nebula.music.data.auth.YtAuth
 import nebula.music.data.models.SearchResult
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -100,29 +122,29 @@ import nebula.music.ui.theme.VoxPalettes
 import nebula.music.ui.theme.paletteById
 import nebula.music.ui.theme.toPalette
 import nebula.music.viewmodel.HomeViewModel
+import nebula.music.viewmodel.PlayerViewModel
 import nebula.music.viewmodel.PlaylistsViewModel
 
 // VoxMusic pattern: every screen reads the palette directly — no MaterialTheme dependency
 // Same backing file MainActivity's nav store reads — one store, two accessors.
 private val Context.settingsNavDataStore by preferencesDataStore(name = "nebula_nav")
-@OptIn(ExperimentalLayoutApi::class)
+
 @Composable
 fun SettingsScreen(
     onCustomizeTabs: () -> Unit = {},
+    onSignIn: () -> Unit = {},
+    auth: YtAuth? = null,
     homeVm: HomeViewModel = viewModel(),
-    playlistsVm: PlaylistsViewModel? = null
+    playlistsVm: PlaylistsViewModel? = null,
+    playerVm: PlayerViewModel = viewModel()
 ) {
-    val context = LocalContext.current
     val picked = ThemeStore.paletteId
     val pal = paletteById(picked)
-    var editorOpen by remember { mutableStateOf(false) }
-    var draft by remember { mutableStateOf(ThemeStore.custom) }
-    val wifiOnly by DownloadPrefs.wifiOnly.collectAsState(initial = false)
-    // Genre picker state — dialog fetches the live grid once per open
-    var genreOpen by remember { mutableStateOf(false) }
-    var genreList by remember { mutableStateOf<List<GenreItem>>(emptyList()) }
-    var genreSelected by remember { mutableStateOf(OnboardingStore.selectedGenres.toSet()) }
-    var genreLoading by remember { mutableStateOf(false) }
+    // Sub-screen navigation as a tiny stack: empty = the hub menu, last entry =
+    // the current screen (so Appearance's lyrics screens nest one level deeper).
+    var stack by remember { mutableStateOf<List<String>>(emptyList()) }
+    // Direction for the slide animation: forward on open, backward on back.
+    var forward by remember { mutableStateOf(true) }
 
     // The page is taller than the viewport (CLEAR CACHE sat below the fold, so the tap
     // never landed and its window never opened), hence the verticalScroll.
@@ -138,1064 +160,707 @@ fun SettingsScreen(
             .verticalScroll(rememberScrollState())
             .padding(16.dp)
     ) {
-        // Title banner — uses palette bg for shadow, pink for highlight
-        Box {
-            Box(
-                modifier = Modifier
-                    .offset(x = 5.dp, y = 5.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(MaterialTheme.colorScheme.outline)
-                    .padding(horizontal = 20.dp, vertical = 10.dp)
-            ) {
-                Text("Settings", color = pal.onBg)
-            }
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(pal.pink)
-                    .border(3.dp, BorderBlack, RoundedCornerShape(12.dp))
-                    .padding(horizontal = 20.dp, vertical = 10.dp)
-            ) {
-                Text("Settings", fontWeight = FontWeight.Black, fontSize = 16.sp, color = pal.onBg)
+        // Push/pop animation: opening a screen slides it in from the right, back
+        // slides it out to the right (standard Android navigation feel).
+        AnimatedContent(
+            targetState = stack.lastOrNull(),
+            transitionSpec = {
+                if (forward) {
+                    (slideInHorizontally { it } + fadeIn()) togetherWith
+                        (slideOutHorizontally { -it / 4 } + fadeOut())
+                } else {
+                    (slideInHorizontally { -it / 4 } + fadeIn()) togetherWith
+                        (slideOutHorizontally { it } + fadeOut())
+                }
+            },
+            label = "settings-nav"
+        ) { section ->
+            val popBack: () -> Unit = { forward = false; stack = stack.dropLast(1) }
+            if (section == null) {
+                Column {
+                    SettingsHub(
+                        pal = pal,
+                        auth = auth,
+                        onNavigate = { forward = true; stack = stack + it }
+                    )
+                }
+            } else {
+                // Swipe right anywhere on a sub-screen to go back, same as the ← button.
+                // Nothing else in Settings drags horizontally, so no gesture conflicts.
+                Column(
+                    modifier = Modifier.pointerInput(section) {
+                        var totalDrag = 0f
+                        detectHorizontalDragGestures(
+                            onDragStart = { totalDrag = 0f },
+                            onDragEnd = { if (totalDrag > 64.dp.toPx()) popBack() },
+                            onHorizontalDrag = { change, amount ->
+                                change.consume()
+                                totalDrag += amount
+                            }
+                        )
+                    }
+                ) {
+                    BackRow(
+                        pal = pal,
+                        title = sectionTitle(section),
+                        onBack = popBack
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    when (section) {
+                        "appearance" -> AppearanceSection(pal) { forward = true; stack = stack + it }
+                        "account" -> if (auth != null) AccountSection(pal, auth, onSignIn)
+                        "navigation" -> NavigationSection(pal, onCustomizeTabs)
+                        "playback_home" -> PlaybackHomeSection(pal, playerVm, homeVm, playlistsVm)
+                        "storage" -> StorageDownloadsSection(pal)
+                        "backup" -> BackupUpdateSection(pal, playlistsVm, homeVm)
+                        "lyrics_style" -> LyricsStyleSection()
+                        "lyrics" -> LyricsProvidersSection()
+                        else -> {}
+                    }
+                }
             }
         }
+    }
+}
 
+// ---- The hub menu: banner, category groups, About ----
+
+/**
+ * The menu page of Settings: title banner, three groups of category rows (each
+ * row opens a sub-screen via [onNavigate]), and the About rows — unchanged.
+ */
+@Composable
+private fun SettingsHub(
+    pal: VoxPalette,
+    auth: YtAuth?,
+    onNavigate: (String) -> Unit
+) {
+    val context = LocalContext.current
+
+    // Title banner — uses palette bg for shadow, pink for highlight
+    Box {
+        Box(
+            modifier = Modifier
+                .offset(x = 5.dp, y = 5.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(MaterialTheme.colorScheme.outline)
+                .padding(horizontal = 20.dp, vertical = 10.dp)
+        ) {
+            Text("Settings", color = pal.onBg)
+        }
+        Box(
+            modifier = Modifier
+                .clip(RoundedCornerShape(12.dp))
+                .background(pal.pink)
+                .border(3.dp, BorderBlack, RoundedCornerShape(12.dp))
+                .padding(horizontal = 20.dp, vertical = 10.dp)
+        ) {
+            Text("Settings", fontWeight = FontWeight.Black, fontSize = 16.sp, color = pal.onBg)
+        }
+    }
+
+    if (auth != null) {
         Spacer(modifier = Modifier.height(16.dp))
-
-        SettingsHeader(title = "Appearance", pal = pal)
-
+        SettingsHeader(title = "You", pal = pal)
         Spacer(modifier = Modifier.height(10.dp))
+        SettingsGroup(pal = pal) {
+            val ytSignedIn by auth.isLoggedIn.collectAsState(initial = false)
+            val ytAccount by auth.currentAccount.collectAsState(initial = null)
+            HubRow(
+                pal = pal,
+                icon = Icons.Filled.AccountCircle,
+                title = "Your account",
+                subtitle = if (ytSignedIn) ytAccount?.email ?: "Signed in"
+                else "Sign in to sync playlists and history with YouTube",
+                onClick = { onNavigate("account") }
+            )
+        }
+    }
 
-        // Palette group — M3 connected list (Grit: leading shape on top, end shape on
-        // the bottom, one 3dp divider) and compact, instead of the old full-height card.
+    Spacer(modifier = Modifier.height(16.dp))
+    SettingsHeader(title = "Experience", pal = pal)
+    Spacer(modifier = Modifier.height(10.dp))
+    SettingsGroup(pal = pal) {
+        HubRow(
+            pal = pal,
+            icon = Icons.Filled.Palette,
+            title = "Appearance",
+            subtitle = "Theme palette, lyrics style, app icon",
+            onClick = { onNavigate("appearance") }
+        )
+        GroupDivider()
+        HubRow(
+            pal = pal,
+            icon = Icons.Filled.QueueMusic,
+            title = "Navigation",
+            subtitle = "Reorder & hide tabs",
+            onClick = { onNavigate("navigation") }
+        )
+        GroupDivider()
+        HubRow(
+            pal = pal,
+            icon = Icons.Filled.Autorenew,
+            title = "Playback & Home",
+            subtitle = "Autoplay, genres, playlists on Home",
+            onClick = { onNavigate("playback_home") }
+        )
+    }
+
+    Spacer(modifier = Modifier.height(16.dp))
+    SettingsHeader(title = "Data", pal = pal)
+    Spacer(modifier = Modifier.height(10.dp))
+    SettingsGroup(pal = pal) {
+        HubRow(
+            pal = pal,
+            icon = Icons.Filled.Storage,
+            title = "Storage & Downloads",
+            subtitle = "Cache, WiFi-only downloads",
+            onClick = { onNavigate("storage") }
+        )
+        GroupDivider()
+        HubRow(
+            pal = pal,
+            icon = Icons.Filled.Refresh,
+            title = "Backup & Update",
+            subtitle = "One-file backup, app updates",
+            onClick = { onNavigate("backup") }
+        )
+    }
+
+    Spacer(modifier = Modifier.height(16.dp))
+    SettingsHeader(title = "About", pal = pal)
+    Spacer(modifier = Modifier.height(10.dp))
+    var showAbout by remember { mutableStateOf(false) }
+    AboutRow(
+        icon = Icons.Filled.Star,
+        title = "Give a star",
+        subtitle = "Star Nebula on GitHub",
+        onClick = { launchUrl(context, "https://github.com/GoD444v/Nebula") }
+    )
+    Spacer(modifier = Modifier.height(12.dp))
+    AboutRow(
+        icon = Icons.Filled.Lightbulb,
+        title = "Request a feature",
+        subtitle = "Tell us what to build",
+        onClick = { launchUrl(context, "https://github.com/GoD444v/Nebula/issues") }
+    )
+    Spacer(modifier = Modifier.height(12.dp))
+    AboutRow(
+        icon = Icons.Filled.BugReport,
+        title = "Report an issue",
+        subtitle = "Something broken? File it",
+        onClick = { launchUrl(context, "https://github.com/GoD444v/Nebula/issues") }
+    )
+    Spacer(modifier = Modifier.height(12.dp))
+    AboutRow(
+        icon = Icons.Filled.Info,
+        title = "About the app",
+        subtitle = "Version, license, source",
+        onClick = { showAbout = true }
+    )
+    if (showAbout) {
+        val version = remember {
+            runCatching {
+                context.packageManager
+                    .getPackageInfo(context.packageName, 0).versionName
+            }.getOrDefault("1.0")
+        }
+        ChunkyWindow(
+            title = "About Nebula",
+            onDismissRequest = { showAbout = false }
+        ) {
+            Text("Version $version", fontSize = 13.sp, color = pal.onSurface)
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                "Free software under GPL-3.0-or-later. Streams public " +
+                    "YouTube content; nothing is hosted here.",
+                fontSize = 13.sp,
+                color = pal.onSurface
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            ChunkyAction(
+                label = "View source",
+                color = pal.cyan,
+                onClick = {
+                    showAbout = false
+                    launchUrl(context, "https://github.com/GoD444v/Nebula")
+                }
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            ChunkyAction(
+                label = "Close",
+                color = pal.bg,
+                onClick = { showAbout = false }
+            )
+        }
+    }
+}
+
+// ---- Sub-screen chrome ----
+
+/** Chunky back button + section title — replaces the menu while inside a section. */
+@Composable
+private fun BackRow(pal: VoxPalette, title: String, onBack: () -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
         Box {
-            // matchParentSize → shadow always matches the real card.
             Box(
                 modifier = Modifier
-                    .matchParentSize()
-                    .offset(x = 4.dp, y = 4.dp)
-                    .clip(RoundedCornerShape(16.dp))
+                    .offset(x = 3.dp, y = 3.dp)
+                    .size(36.dp)
+                    .clip(RoundedCornerShape(12.dp))
                     .background(MaterialTheme.colorScheme.outline)
             )
-            Column(modifier = Modifier.fillMaxWidth()) {
-                val groupShape = RoundedCornerShape(16.dp)
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(pal.yellow)
+                    .border(3.dp, BorderBlack, RoundedCornerShape(12.dp))
+                    .clickable(onClick = onBack),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.KeyboardArrowLeft,
+                    contentDescription = "Back",
+                    tint = pal.onSurface,
+                    modifier = Modifier.size(22.dp)
+                )
+            }
+        }
+        Spacer(modifier = Modifier.width(12.dp))
+        Text(
+            title,
+            fontWeight = FontWeight.Black,
+            fontSize = 18.sp,
+            color = pal.onBg
+        )
+    }
+}
+
+/** Sub-screen title for a hub category id. */
+private fun sectionTitle(section: String?): String = when (section) {
+    "appearance" -> "Appearance"
+    "account" -> "Your account"
+    "navigation" -> "Navigation"
+    "playback_home" -> "Playback & Home"
+    "storage" -> "Storage & Downloads"
+    "backup" -> "Backup & Update"
+    "lyrics_style" -> "Lyrics style"
+    "lyrics" -> "Lyrics"
+    else -> "Settings"
+}
+
+/** Connected card block with the standard offset shadow — hub rows sit inside it. */
+@Composable
+private fun SettingsGroup(pal: VoxPalette, content: @Composable ColumnScope.() -> Unit) {
+    Box {
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .offset(x = 4.dp, y = 4.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(MaterialTheme.colorScheme.outline)
+        )
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(16.dp))
+                .background(pal.surface)
+                .border(3.dp, BorderBlack, RoundedCornerShape(16.dp)),
+            content = content
+        )
+    }
+}
+
+/** 3dp black divider between connected rows inside a hub group. */
+@Composable
+private fun GroupDivider() {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(3.dp)
+            .background(BorderBlack)
+    )
+}
+
+/**
+ * One tappable hub category row: icon + title + subtitle + chevron. No card of
+ * its own — the surrounding SettingsGroup draws the card, like Grit's list items.
+ */
+@Composable
+private fun HubRow(
+    pal: VoxPalette,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    subtitle: String,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = pal.onSurface,
+            modifier = Modifier.size(22.dp)
+        )
+        Spacer(modifier = Modifier.width(10.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                title,
+                fontWeight = FontWeight.Black,
+                fontSize = 15.sp,
+                color = pal.onSurface
+            )
+            Text(
+                subtitle,
+                fontSize = 11.sp,
+                color = pal.onSurface
+            )
+        }
+        Icon(
+            imageVector = Icons.Filled.KeyboardArrowRight,
+            contentDescription = null,
+            tint = pal.onSurface,
+            modifier = Modifier.size(20.dp)
+        )
+    }
+}
+
+// ---- Sub-screens ----
+
+/**
+ * Appearance: theme palette picker (with the My Palette editor window), lyrics
+ * style, and the app-icon switcher with its picker window.
+ */
+@Composable
+private fun AppearanceSection(pal: VoxPalette, onOpen: (String) -> Unit) {
+    val context = LocalContext.current
+    val picked = ThemeStore.paletteId
+    var editorOpen by remember { mutableStateOf(false) }
+    var draft by remember { mutableStateOf(ThemeStore.custom) }
+
+    SettingsHeader(title = "Appearance", pal = pal)
+
+    Spacer(modifier = Modifier.height(10.dp))
+
+    // Palette group — M3 connected list (Grit: leading shape on top, end shape on
+    // the bottom, one 3dp divider) and compact, instead of the old full-height card.
+    Box {
+        // matchParentSize → shadow always matches the real card.
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .offset(x = 4.dp, y = 4.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(MaterialTheme.colorScheme.outline)
+        )
+        Column(modifier = Modifier.fillMaxWidth()) {
+            val groupShape = RoundedCornerShape(16.dp)
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(groupShape)
+                    .background(pal.surface)
+                    .border(3.dp, BorderBlack, groupShape)
+            ) {
+                // Header row — Grit ListItem: leading icon + headline + supporting text
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Palette,
+                        contentDescription = null,
+                        tint = pal.onSurface,
+                        modifier = Modifier.size(22.dp)
+                    )
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Column {
+                        Text(
+                            "Theme Palette",
+                            fontWeight = FontWeight.Black,
+                            fontSize = 15.sp,
+                            color = pal.onSurface
+                        )
+                        Text(
+                            "Selected: ${pal.name}",
+                            fontSize = 11.sp,
+                            color = pal.onSurface
+                        )
+                    }
+                }
+                // One shared divider, like Grit's connected items
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(3.dp)
+                        .background(BorderBlack)
+                )
+
+                // Grit-style picker: each palette is a 6-slice pie of its own colours.
+                // 5 per row, 40dp swatches → the whole block stays compact.
+                val options = VoxPalettes + ThemeStore.custom.toPalette()
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(groupShape)
-                        .background(pal.surface)
-                        .border(3.dp, BorderBlack, groupShape)
+                        .padding(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    // Header row — Grit ListItem: leading icon + headline + supporting text
-                    Row(
+                    options.chunked(5).forEach { line ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            line.forEach { palette ->
+                                PaletteDot(
+                                    palette = palette,
+                                    selected = picked == palette.id,
+                                    tickColor = pal.onBg,
+                                    onClick = {
+                                        ThemeStore.setPalette(context, palette.id)
+                                        // Choosing "My Palette" opens the editor window with a preview
+                                        if (palette.id == "custom") {
+                                            draft = ThemeStore.custom
+                                            editorOpen = true
+                                        }
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Hint lives OUTSIDE the shadow Box: the shadow uses matchParentSize, so it
+    // stretched over the hint too and printed a black band across it.
+    Spacer(modifier = Modifier.height(6.dp))
+    Text(
+        "Tap My Palette to open the editor with a live preview.",
+        fontSize = 11.sp,
+        color = pal.onSurface
+    )
+
+    Spacer(modifier = Modifier.height(16.dp))
+
+    // Lyrics used to be one popup window on this page; they are two sub-screens now.
+    SettingsGroup(pal = pal) {
+        HubRow(
+            pal = pal,
+            icon = Icons.Filled.Brush,
+            title = "Lyrics style",
+            subtitle = "Highlight mode · word colour",
+            onClick = { onOpen("lyrics_style") }
+        )
+        GroupDivider()
+        HubRow(
+            pal = pal,
+            icon = Icons.Filled.Lyrics,
+            title = "Lyrics",
+            subtitle = "Reading, translation, providers",
+            onClick = { onOpen("lyrics") }
+        )
+    }
+
+    Spacer(modifier = Modifier.height(16.dp))
+
+    // App icon switcher — the launcher icon is one of three activity-aliases in
+    // AndroidManifest.xml, so enabling an alias literally swaps the home-screen
+    // icon. Alias 1 (Icon 1) is the default; the picker lives in a window so
+    // the three thumbnails do not bloat this list.
+    var icon by remember { mutableStateOf(currentIcon(context)) }
+    var showIconPicker by remember { mutableStateOf(false) }
+    val iconShape = RoundedCornerShape(16.dp)
+    Box {
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .offset(x = 4.dp, y = 4.dp)
+                .clip(iconShape)
+                .background(MaterialTheme.colorScheme.outline)
+        )
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(iconShape)
+                .background(pal.surface)
+                .border(3.dp, BorderBlack, iconShape)
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { showIconPicker = true }
+                    .padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.PhoneAndroid,
+                    contentDescription = null,
+                    tint = pal.onSurface,
+                    modifier = Modifier.size(22.dp)
+                )
+                Spacer(modifier = Modifier.width(10.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "App icon",
+                        fontWeight = FontWeight.Black,
+                        fontSize = 15.sp,
+                        color = pal.onSurface
+                    )
+                    Text(
+                        "Selected: Icon $icon",
+                        fontSize = 11.sp,
+                        color = pal.onSurface
+                    )
+                }
+                // Chunky chevron — same idiom as the player's controls, and it
+                // is the only hint that the whole row is tappable.
+                Box {
+                    Box(
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                            .offset(x = 3.dp, y = 3.dp)
+                            .size(36.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(MaterialTheme.colorScheme.outline)
+                    )
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(pal.yellow)
+                            .border(3.dp, BorderBlack, RoundedCornerShape(12.dp)),
+                        contentAlignment = Alignment.Center
                     ) {
                         Icon(
-                            imageVector = Icons.Filled.Palette,
+                            imageVector = Icons.Filled.KeyboardArrowRight,
                             contentDescription = null,
                             tint = pal.onSurface,
                             modifier = Modifier.size(22.dp)
                         )
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Column {
-                            Text(
-                                "Theme Palette",
-                                fontWeight = FontWeight.Black,
-                                fontSize = 15.sp,
-                                color = pal.onSurface
-                            )
-                            Text(
-                                "Selected: ${pal.name}",
-                                fontSize = 11.sp,
-                                color = pal.onSurface
-                            )
-                        }
-                    }
-                    // One shared divider, like Grit's connected items
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(3.dp)
-                            .background(BorderBlack)
-                    )
-
-                    // Grit-style picker: each palette is a 6-slice pie of its own colours.
-                    // 5 per row, 40dp swatches → the whole block stays compact.
-                    val options = VoxPalettes + ThemeStore.custom.toPalette()
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(10.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        options.chunked(5).forEach { line ->
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                line.forEach { palette ->
-                                    PaletteDot(
-                                        palette = palette,
-                                        selected = picked == palette.id,
-                                        tickColor = pal.onBg,
-                                        onClick = {
-                                            ThemeStore.setPalette(context, palette.id)
-                                            // Choosing "My Palette" opens the editor window with a preview
-                                            if (palette.id == "custom") {
-                                                draft = ThemeStore.custom
-                                                editorOpen = true
-                                            }
-                                        }
-                                    )
-                                }
-                            }
-                        }
                     }
                 }
             }
-        }
-
-        // Hint lives OUTSIDE the shadow Box: the shadow uses matchParentSize, so it
-        // stretched over the hint too and printed a black band across it.
-        Spacer(modifier = Modifier.height(6.dp))
-        Text(
-            "Tap My Palette to open the editor with a live preview.",
-            fontSize = 11.sp,
-            color = pal.onSurface
-        )
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        LyricsStyleSection()
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // Customize Navigation Tabs button
-        Box {
             Box(
                 modifier = Modifier
-                    .matchParentSize()
-                    .offset(x = 4.dp, y = 4.dp)
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(MaterialTheme.colorScheme.outline)
+                    .fillMaxWidth()
+                    .height(3.dp)
+                    .background(BorderBlack)
             )
-            Column(
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(pal.surface)
-                    .border(3.dp, BorderBlack, RoundedCornerShape(16.dp))
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.QueueMusic,
-                        contentDescription = null,
-                        tint = pal.onSurface,
-                        modifier = Modifier.size(22.dp)
-                    )
-                    Spacer(modifier = Modifier.width(10.dp))
-                    Column {
-                        Text(
-                            "Navigation Tabs",
-                            fontWeight = FontWeight.Black,
-                            fontSize = 15.sp,
-                            color = pal.onSurface
-                        )
-                        Text(
-                            "Reorder & hide tabs",
-                            fontSize = 11.sp,
-                            color = pal.onSurface
-                        )
+                    .clickable {
+                        resetAppIcon(context)
+                        icon = 1
                     }
-                }
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(3.dp)
-                        .background(BorderBlack)
+                    .padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Refresh,
+                    contentDescription = null,
+                    tint = pal.onSurface,
+                    modifier = Modifier.size(22.dp)
                 )
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(10.dp),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(44.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(pal.yellow)
-                            .border(3.dp, BorderBlack, RoundedCornerShape(12.dp))
-                            .clickable { onCustomizeTabs() },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text("CUSTOMIZE TABS", fontWeight = FontWeight.Black, fontSize = 14.sp, color = pal.onSurface)
-                    }
+                Spacer(modifier = Modifier.width(10.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "Reset launcher icon",
+                        fontWeight = FontWeight.Black,
+                        fontSize = 15.sp,
+                        color = pal.onSurface
+                    )
+                    Text(
+                        "Back to Icon 1 — fixes Run failing after picking another icon",
+                        fontSize = 11.sp,
+                        color = pal.onSurface
+                    )
                 }
             }
         }
+    }
 
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // App icon switcher — the launcher icon is one of three activity-aliases in
-        // AndroidManifest.xml, so enabling an alias literally swaps the home-screen
-        // icon. Alias 1 (Icon 1) is the default; the picker lives in a window so
-        // the three thumbnails do not bloat this list.
-        var icon by remember { mutableStateOf(currentIcon(context)) }
-        var showIconPicker by remember { mutableStateOf(false) }
-        val iconShape = RoundedCornerShape(16.dp)
-        Box {
-            Box(
-                modifier = Modifier
-                    .matchParentSize()
-                    .offset(x = 4.dp, y = 4.dp)
-                    .clip(iconShape)
-                    .background(MaterialTheme.colorScheme.outline)
+    if (showIconPicker) {
+        ChunkyWindow(
+            title = "App icon",
+            onDismissRequest = { showIconPicker = false }
+        ) {
+            // The plain PNGs, NOT @mipmap/ic_icon1: on API 26+ that resolves to
+            // the adaptive-icon XML, which painterResource refuses to draw and
+            // crashes Settings with "Only VectorDrawables and rasterized asset..."
+            val iconImages = listOf(
+                R.drawable.ic_icon1_art,
+                R.drawable.ic_icon2_art,
+                R.drawable.ic_icon3_art
             )
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(iconShape)
-                    .background(pal.surface)
-                    .border(3.dp, BorderBlack, iconShape)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { showIconPicker = true }
-                        .padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.PhoneAndroid,
-                        contentDescription = null,
-                        tint = pal.onSurface,
-                        modifier = Modifier.size(22.dp)
-                    )
-                    Spacer(modifier = Modifier.width(10.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            "App icon",
-                            fontWeight = FontWeight.Black,
-                            fontSize = 15.sp,
-                            color = pal.onSurface
-                        )
-                        Text(
-                            "Selected: Icon $icon",
-                            fontSize = 11.sp,
-                            color = pal.onSurface
-                        )
-                    }
-                    // Chunky chevron — same idiom as the player's controls, and it
-                    // is the only hint that the whole row is tappable.
-                    Box {
+                iconImages.forEachIndexed { i, res ->
+                    val active = icon == i + 1
+                    Box(contentAlignment = Alignment.Center) {
+                        // Extrusion behind the tile, active tile lifted off it.
                         Box(
                             modifier = Modifier
                                 .offset(x = 3.dp, y = 3.dp)
-                                .size(36.dp)
-                                .clip(RoundedCornerShape(12.dp))
+                                .size(72.dp)
+                                .clip(RoundedCornerShape(16.dp))
                                 .background(MaterialTheme.colorScheme.outline)
                         )
                         Box(
                             modifier = Modifier
-                                .size(36.dp)
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(pal.yellow)
-                                .border(3.dp, BorderBlack, RoundedCornerShape(12.dp)),
-                            contentAlignment = Alignment.Center
+                                .size(72.dp)
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(pal.bg)
+                                .border(
+                                    if (active) 4.dp else 3.dp,
+                                    if (active) pal.pink else BorderBlack,
+                                    RoundedCornerShape(16.dp)
+                                )
+                                .clickable {
+                                    setAppIcon(context, i + 1)
+                                    icon = i + 1
+                                }
                         ) {
-                            Icon(
-                                imageVector = Icons.Filled.KeyboardArrowRight,
-                                contentDescription = null,
-                                tint = pal.onSurface,
-                                modifier = Modifier.size(22.dp)
-                            )
-                        }
-                    }
-                }
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(3.dp)
-                        .background(BorderBlack)
-                )
-            }
-        }
-
-        if (showIconPicker) {
-            ChunkyWindow(
-                title = "App icon",
-                onDismissRequest = { showIconPicker = false }
-            ) {
-                // The plain PNGs, NOT @mipmap/ic_icon1: on API 26+ that resolves to
-                // the adaptive-icon XML, which painterResource refuses to draw and
-                // crashes Settings with "Only VectorDrawables and rasterized asset..."
-                val iconImages = listOf(
-                    R.drawable.ic_icon1_art,
-                    R.drawable.ic_icon2_art,
-                    R.drawable.ic_icon3_art
-                )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceEvenly,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    iconImages.forEachIndexed { i, res ->
-                        val active = icon == i + 1
-                        Box(contentAlignment = Alignment.Center) {
-                            // Extrusion behind the tile, active tile lifted off it.
-                            Box(
+                            Image(
+                                painter = painterResource(res),
+                                contentDescription = "Icon ${i + 1}",
                                 modifier = Modifier
-                                    .offset(x = 3.dp, y = 3.dp)
-                                    .size(72.dp)
-                                    .clip(RoundedCornerShape(16.dp))
-                                    .background(MaterialTheme.colorScheme.outline)
+                                    .fillMaxSize()
+                                    .padding(6.dp)
+                                    .clip(RoundedCornerShape(11.dp))
                             )
-                            Box(
-                                modifier = Modifier
-                                    .size(72.dp)
-                                    .clip(RoundedCornerShape(16.dp))
-                                    .background(pal.bg)
-                                    .border(
-                                        if (active) 4.dp else 3.dp,
-                                        if (active) pal.pink else BorderBlack,
-                                        RoundedCornerShape(16.dp)
-                                    )
-                                    .clickable {
-                                        setAppIcon(context, i + 1)
-                                        icon = i + 1
-                                    }
-                            ) {
-                                Image(
-                                    painter = painterResource(res),
-                                    contentDescription = "Icon ${i + 1}",
+                            if (active) {
+                                Icon(
+                                    imageVector = Icons.Filled.Check,
+                                    contentDescription = null,
+                                    tint = pal.onBg,
                                     modifier = Modifier
-                                        .fillMaxSize()
-                                        .padding(6.dp)
-                                        .clip(RoundedCornerShape(11.dp))
-                                )
-                                if (active) {
-                                    Icon(
-                                        imageVector = Icons.Filled.Check,
-                                        contentDescription = null,
-                                        tint = pal.onBg,
-                                        modifier = Modifier
-                                            .align(Alignment.BottomEnd)
-                                            .padding(4.dp)
-                                            .size(18.dp)
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-                Spacer(modifier = Modifier.height(14.dp))
-                ChunkyAction(
-                    label = "Done",
-                    color = pal.yellow,
-                    onClick = { showIconPicker = false }
-                )
-            }
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        SettingsHeader(title = "Storage & Downloads", pal = pal)
-
-        Spacer(modifier = Modifier.height(10.dp))
-
-        // Storage & Cache — shows current cache size and a chunky clear button.
-        // Clearing asks first (mini warning window) and runs off the main thread.
-        var cacheSize by remember { mutableStateOf(calculateCacheSize()) }
-        var cacheCleared by remember { mutableStateOf(false) }
-        var showClearWarn by remember { mutableStateOf(false) }
-        val cacheScope = rememberCoroutineScope()
-        val cacheShape = RoundedCornerShape(16.dp)
-        Box {
-            Box(
-                modifier = Modifier
-                    .matchParentSize()
-                    .offset(x = 4.dp, y = 4.dp)
-                    .clip(cacheShape)
-                    .background(MaterialTheme.colorScheme.outline)
-            )
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(cacheShape)
-                    .background(pal.surface)
-                    .border(3.dp, BorderBlack, cacheShape)
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.Storage,
-                        contentDescription = null,
-                        tint = pal.onSurface,
-                        modifier = Modifier.size(22.dp)
-                    )
-                    Spacer(modifier = Modifier.width(10.dp))
-                    Column {
-                        Text(
-                            "Storage & Cache",
-                            fontWeight = FontWeight.Black,
-                            fontSize = 15.sp,
-                            color = pal.onSurface
-                        )
-                        Text(
-                            "Cache size: $cacheSize MB",
-                            fontSize = 11.sp,
-                            color = pal.onSurface
-                        )
-                    }
-                }
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(3.dp)
-                        .background(BorderBlack)
-                )
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(10.dp),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(44.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(pal.yellow)
-                            .border(3.dp, BorderBlack, RoundedCornerShape(12.dp))
-                            .clickable { showClearWarn = true },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.Delete,
-                                contentDescription = null,
-                                tint = pal.onSurface,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Text("CLEAR CACHE", fontWeight = FontWeight.Black, fontSize = 14.sp, color = pal.onSurface)
-                        }
-                    }
-                }
-                if (cacheCleared) {
-                    Text(
-                        "Cache cleared!",
-                        fontSize = 11.sp,
-                        color = pal.onSurface,
-                        modifier = Modifier.padding(start = 10.dp, end = 10.dp, bottom = 10.dp)
-                    )
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // WiFi-only downloads toggle — prevents downloads on mobile data
-        val downloadScope = rememberCoroutineScope()
-        Box {
-            Box(
-                modifier = Modifier
-                    .matchParentSize()
-                    .offset(x = 4.dp, y = 4.dp)
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(MaterialTheme.colorScheme.outline)
-            )
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(pal.surface)
-                    .border(3.dp, BorderBlack, RoundedCornerShape(16.dp))
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.Storage,
-                        contentDescription = null,
-                        tint = pal.onSurface,
-                        modifier = Modifier.size(22.dp)
-                    )
-                    Spacer(modifier = Modifier.width(10.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            "WiFi-only downloads",
-                            fontWeight = FontWeight.Black,
-                            fontSize = 15.sp,
-                            color = pal.onSurface
-                        )
-                        Text(
-                            "Only download on WiFi",
-                            fontSize = 11.sp,
-                            color = pal.onSurface
-                        )
-                    }
-                    Switch(
-                        checked = wifiOnly,
-                        onCheckedChange = { enabled ->
-                            downloadScope.launch {
-                                DownloadPrefs.setWifiOnly(enabled)
-                                NebulaDownloads.setWifiOnly(enabled)
-                            }
-                        },
-                        colors = SwitchDefaults.colors(
-                            checkedThumbColor = pal.yellow,
-                            checkedTrackColor = pal.yellow.copy(alpha = 0.5f),
-                            uncheckedThumbColor = pal.onSurface,
-                            uncheckedTrackColor = pal.onSurface.copy(alpha = 0.3f)
-                        )
-                    )
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        SettingsHeader(title = "Home & Library", pal = pal)
-
-        Spacer(modifier = Modifier.height(10.dp))
-
-        // Music genres — same card idiom as the WiFi toggle above. Opens a
-        // ChunkyWindow picker; saving refreshes the home feed immediately.
-        Box {
-            Box(
-                modifier = Modifier
-                    .matchParentSize()
-                    .offset(x = 4.dp, y = 4.dp)
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(MaterialTheme.colorScheme.outline)
-            )
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(pal.surface)
-                    .border(3.dp, BorderBlack, RoundedCornerShape(16.dp))
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.QueueMusic,
-                        contentDescription = null,
-                        tint = pal.onSurface,
-                        modifier = Modifier.size(22.dp)
-                    )
-                    Spacer(modifier = Modifier.width(10.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            "Music genres",
-                            fontWeight = FontWeight.Black,
-                            fontSize = 15.sp,
-                            color = pal.onSurface
-                        )
-                        Text(
-                            if (OnboardingStore.selectedGenres.isEmpty()) "Shapes your home feed"
-                            else OnboardingStore.selectedGenres.joinToString(", "),
-                            fontSize = 11.sp,
-                            color = pal.onSurface
-                        )
-                    }
-                    Text(
-                        "CHANGE",
-                        modifier = Modifier
-                            .clickable {
-                                genreSelected = OnboardingStore.selectedGenres.toSet()
-                                genreOpen = true
-                            }
-                            .padding(8.dp),
-                        fontWeight = FontWeight.Black,
-                        fontSize = 13.sp,
-                        color = pal.pink
-                    )
-                }
-            }
-        }
-
-        if (genreOpen) {
-            LaunchedEffect(Unit) {
-                genreLoading = true
-                genreList = SearchRepository().moodAndGenres()
-                genreLoading = false
-            }
-            ChunkyWindow(
-                title = "Music genres",
-                onDismissRequest = { genreOpen = false }
-            ) {
-                if (genreLoading) {
-                    Text("Loading genres...", fontSize = 13.sp, color = pal.onSurface)
-                } else {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(max = 320.dp)
-                            .verticalScroll(rememberScrollState())
-                    ) {
-                        FlowRow(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            verticalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            genreList.forEach { genre ->
-                                val isSelected = genre.title in genreSelected
-                                HomeFilterChip(
-                                    label = genre.title,
-                                    selected = isSelected,
-                                    onClick = {
-                                        genreSelected =
-                                            if (isSelected) genreSelected - genre.title
-                                            else genreSelected + genre.title
-                                    }
+                                        .align(Alignment.BottomEnd)
+                                        .padding(4.dp)
+                                        .size(18.dp)
                                 )
                             }
                         }
                     }
                 }
-                Spacer(modifier = Modifier.height(12.dp))
-                ChunkyAction(
-                    label = "Save",
-                    color = pal.pink,
-                    onClick = {
-                        genreOpen = false
-                        val endpoints = genreList
-                            .filter { it.title in genreSelected }
-                            .map { Triple(it.title, it.browseId, it.params) }
-                        OnboardingStore.complete(context, endpoints)
-                        if (endpoints.isNotEmpty()) homeVm.loadPersonalized()
-                        else homeVm.load(null)
-                    }
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                ChunkyAction(
-                    label = "Cancel",
-                    color = pal.bg,
-                    onClick = { genreOpen = false }
-                )
             }
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // Your-playlists visibility — master switch for the Home section plus
-        // one row per playlist. Same card idiom as the WiFi toggle above.
-        val homePlaylists = playlistsVm?.playlists?.collectAsState()?.value.orEmpty()
-        val visibleCount =
-            homePlaylists.count { HomePrefs.isVisible(it.playlist.id, it.playlist.isSystem) }
-        Box {
-            Box(
-                modifier = Modifier
-                    .matchParentSize()
-                    .offset(x = 4.dp, y = 4.dp)
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(MaterialTheme.colorScheme.outline)
+            Spacer(modifier = Modifier.height(14.dp))
+            ChunkyAction(
+                label = "Done",
+                color = pal.yellow,
+                onClick = { showIconPicker = false }
             )
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(pal.surface)
-                    .border(3.dp, BorderBlack, RoundedCornerShape(16.dp))
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.QueueMusic,
-                        contentDescription = null,
-                        tint = pal.onSurface,
-                        modifier = Modifier.size(22.dp)
-                    )
-                    Spacer(modifier = Modifier.width(10.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            "Your playlists on Home",
-                            fontWeight = FontWeight.Black,
-                            fontSize = 15.sp,
-                            color = pal.onSurface
-                        )
-                        Text(
-                            if (homePlaylists.isEmpty()) "No playlists yet"
-                            else "$visibleCount of ${homePlaylists.size} shown",
-                            fontSize = 11.sp,
-                            color = pal.onSurface
-                        )
-                    }
-                    Switch(
-                        checked = HomePrefs.showYourPlaylists,
-                        onCheckedChange = { enabled ->
-                            HomePrefs.setShowYourPlaylists(context, enabled)
-                        },
-                        colors = SwitchDefaults.colors(
-                            checkedThumbColor = pal.yellow,
-                            checkedTrackColor = pal.yellow.copy(alpha = 0.5f),
-                            uncheckedThumbColor = pal.onSurface,
-                            uncheckedTrackColor = pal.onSurface.copy(alpha = 0.3f)
-                        )
-                    )
-                }
-                if (homePlaylists.isNotEmpty()) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(3.dp)
-                            .background(BorderBlack)
-                    )
-                    homePlaylists.forEach { entry ->
-                        val visible =
-                            HomePrefs.isVisible(entry.playlist.id, entry.playlist.isSystem)
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    entry.playlist.name,
-                                    fontWeight = FontWeight.Black,
-                                    fontSize = 14.sp,
-                                    color = pal.onSurface
-                                )
-                                Text(
-                                    "${entry.songCount} songs",
-                                    fontSize = 11.sp,
-                                    color = pal.onSurface
-                                )
-                            }
-                            Switch(
-                                checked = visible,
-                                onCheckedChange = { show ->
-                                    HomePrefs.setVisible(
-                                        context, entry.playlist.id, entry.playlist.isSystem, show
-                                    )
-                                },
-                                colors = SwitchDefaults.colors(
-                                    checkedThumbColor = pal.yellow,
-                                    checkedTrackColor = pal.yellow.copy(alpha = 0.5f),
-                                    uncheckedThumbColor = pal.onSurface,
-                                    uncheckedTrackColor = pal.onSurface.copy(alpha = 0.3f)
-                                )
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        SettingsHeader(title = "Backup & Restore", pal = pal)
-
-        Spacer(modifier = Modifier.height(10.dp))
-
-        // Backup & restore — one JSON file through the system picker: playlists
-        // plus every personalization setting. No accounts, no servers.
-        val backupScope = rememberCoroutineScope()
-        var pendingBackup by remember { mutableStateOf<String?>(null) }
-        val exportLauncher = rememberLauncherForActivityResult(
-            ActivityResultContracts.CreateDocument("application/json")
-        ) { uri ->
-            val json = pendingBackup
-            if (uri != null && json != null) {
-                context.contentResolver.openOutputStream(uri)?.use { stream ->
-                    stream.write(json.toByteArray())
-                }
-                Toast.makeText(context, "Backup saved", Toast.LENGTH_SHORT).show()
-            }
-            pendingBackup = null
-        }
-        val importLauncher = rememberLauncherForActivityResult(
-            ActivityResultContracts.OpenDocument()
-        ) { uri ->
-            if (uri == null || playlistsVm == null) return@rememberLauncherForActivityResult
-            backupScope.launch(Dispatchers.IO) {
-                val text = context.contentResolver.openInputStream(uri)
-                    ?.bufferedReader()?.readText()
-                val backup = text?.let { BackupManager.import(it) }
-                if (backup == null) {
-                    backupScope.launch(Dispatchers.Main) {
-                        Toast.makeText(context, "Invalid backup file", Toast.LENGTH_SHORT).show()
-                    }
-                    return@launch
-                }
-                for (bp in backup.playlists) {
-                    playlistsVm.createWithSongs(
-                        bp.name,
-                        bp.songs.map {
-                            SearchResult(it.videoId, it.title, it.artist, it.thumb, addedAt = it.addedAt)
-                        }
-                    )
-                }
-                val s = backup.settings
-                OnboardingStore.restoreRaw(context, s.genres, s.artists)
-                ThemeStore.setMode(context, s.themeMode)
-                ThemeStore.setPalette(context, s.paletteId)
-                if (s.customColors.size == 7) {
-                    ThemeStore.setCustom(
-                        context,
-                        VoxCustom(
-                            s.customColors[0], s.customColors[1], s.customColors[2],
-                            s.customColors[3], s.customColors[4], s.customColors[5],
-                            s.customColors[6]
-                        )
-                    )
-                }
-                if (s.tabOrder.isNotBlank()) {
-                    context.settingsNavDataStore.edit { prefs ->
-                        prefs[stringPreferencesKey("tab_order")] = s.tabOrder
-                    }
-                }
-                HomePrefs.restore(
-                    context, s.homeShow,
-                    s.homeVisibility.split(",").mapNotNull { entry ->
-                        val (id, v) = entry.split("=").takeIf { it.size == 2 }
-                            ?: return@mapNotNull null
-                        id.toLongOrNull()?.let { it to (v == "1") }
-                    }.toMap()
-                )
-                DownloadPrefs.setWifiOnly(s.wifiOnly)
-                NebulaDownloads.setWifiOnly(s.wifiOnly)
-                homeVm.loadPersonalized()
-                backupScope.launch(Dispatchers.Main) {
-                    Toast.makeText(
-                        context,
-                        "Restored ${backup.playlists.size} playlists",
-                        Toast.LENGTH_SHORT
-                    ).show()
-                }
-            }
-        }
-        Box {
-            Box(
-                modifier = Modifier
-                    .matchParentSize()
-                    .offset(x = 4.dp, y = 4.dp)
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(MaterialTheme.colorScheme.outline)
-            )
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(pal.surface)
-                    .border(3.dp, BorderBlack, RoundedCornerShape(16.dp))
-                    .padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 10.dp)
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = Icons.Filled.Storage,
-                        contentDescription = null,
-                        tint = pal.onSurface,
-                        modifier = Modifier.size(22.dp)
-                    )
-                    Spacer(modifier = Modifier.width(10.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            "Backup & restore",
-                            fontWeight = FontWeight.Black,
-                            fontSize = 15.sp,
-                            color = pal.onSurface
-                        )
-                        Text(
-                            "Playlists plus all settings, one file",
-                            fontSize = 11.sp,
-                            color = pal.onSurface
-                        )
-                    }
-                }
-                Spacer(modifier = Modifier.height(10.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Box(modifier = Modifier.weight(1f)) {
-                        ChunkyAction(
-                            label = "Export",
-                            color = pal.cyan,
-                            onClick = {
-                                backupScope.launch(Dispatchers.IO) {
-                                    val list = playlistsVm?.playlists?.value.orEmpty()
-                                        .filter { !it.playlist.isSystem }
-                                    val bps = list.map { e ->
-                                        val songs = playlistsVm!!.songsOf(e.playlist.id)
-                                        BackupManager.BackupPlaylist(
-                                            e.playlist.name,
-                                            songs.map {
-                                                BackupManager.BackupSong(
-                                                    it.videoId, it.title, it.artist,
-                                                    it.thumbnailUrl, it.addedAt
-                                                )
-                                            }
-                                        )
-                                    }
-                                    val tabs = try {
-                                        context.settingsNavDataStore.data.first()
-                                            .get(stringPreferencesKey("tab_order")).orEmpty()
-                                    } catch (_: Exception) {
-                                        ""
-                                    }
-                                    pendingBackup = BackupManager.export(
-                                        bps,
-                                        BackupManager.BackupSettings(
-                                            genres = OnboardingStore.rawGenres(),
-                                            artists = OnboardingStore.rawArtists(),
-                                            themeMode = ThemeStore.mode,
-                                            paletteId = ThemeStore.paletteId,
-                                            customColors = slotsOf(ThemeStore.custom).map { it.second },
-                                            tabOrder = tabs,
-                                            homeShow = HomePrefs.showYourPlaylists,
-                                            homeVisibility = HomePrefs.visibilityOverrides.entries
-                                                .joinToString(",") { (k, v) -> "$k=${if (v) 1 else 0}" },
-                                            wifiOnly = DownloadPrefs.wifiOnly.value
-                                        )
-                                    )
-                                    exportLauncher.launch("nebula-backup.json")
-                                }
-                            }
-                        )
-                    }
-                    Box(modifier = Modifier.weight(1f)) {
-                        ChunkyAction(
-                            label = "Import",
-                            color = pal.bg,
-                            onClick = { importLauncher.launch(arrayOf("application/json")) }
-                        )
-                    }
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        SettingsHeader(title = "About", pal = pal)
-
-        Spacer(modifier = Modifier.height(10.dp))
-
-        var showAbout by remember { mutableStateOf(false) }
-        AboutRow(
-            icon = Icons.Filled.Star,
-            title = "Give a star",
-            subtitle = "Star Nebula on GitHub",
-            onClick = { launchUrl(context, "https://github.com/GoD444v/Nebula") }
-        )
-        Spacer(modifier = Modifier.height(12.dp))
-        AboutRow(
-            icon = Icons.Filled.Lightbulb,
-            title = "Request a feature",
-            subtitle = "Tell us what to build",
-            onClick = { launchUrl(context, "https://github.com/GoD444v/Nebula/issues") }
-        )
-        Spacer(modifier = Modifier.height(12.dp))
-        AboutRow(
-            icon = Icons.Filled.BugReport,
-            title = "Report an issue",
-            subtitle = "Something broken? File it",
-            onClick = { launchUrl(context, "https://github.com/GoD444v/Nebula/issues") }
-        )
-        Spacer(modifier = Modifier.height(12.dp))
-        AboutRow(
-            icon = Icons.Filled.Info,
-            title = "About the app",
-            subtitle = "Version, license, source",
-            onClick = { showAbout = true }
-        )
-        if (showAbout) {
-            val version = remember {
-                runCatching {
-                    context.packageManager
-                        .getPackageInfo(context.packageName, 0).versionName
-                }.getOrDefault("1.0")
-            }
-            ChunkyWindow(
-                title = "About Nebula",
-                onDismissRequest = { showAbout = false }
-            ) {
-                Text("Version $version", fontSize = 13.sp, color = pal.onSurface)
-                Spacer(modifier = Modifier.height(6.dp))
-                Text(
-                    "Free software under GPL-3.0-or-later. Streams public " +
-                        "YouTube content; nothing is hosted here.",
-                    fontSize = 13.sp,
-                    color = pal.onSurface
-                )
-                Spacer(modifier = Modifier.height(12.dp))
-                ChunkyAction(
-                    label = "View source",
-                    color = pal.cyan,
-                    onClick = {
-                        showAbout = false
-                        launchUrl(context, "https://github.com/GoD444v/Nebula")
-                    }
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                ChunkyAction(
-                    label = "Close",
-                    color = pal.bg,
-                    onClick = { showAbout = false }
-                )
-            }
-        }
-
-        // Mini warning window before wiping downloaded song data: ChunkyWindow, not
-        // AlertDialog — this is the app's own window idiom.
-        if (showClearWarn) {
-            ChunkyWindow(
-                title = "Clear cache?",
-                onDismissRequest = { showClearWarn = false }
-            ) {
-                Text(
-                    "Cached songs will re-download on next play. Playback and playlists are unaffected.",
-                    fontSize = 13.sp,
-                    color = pal.onSurface
-                )
-                Spacer(modifier = Modifier.height(12.dp))
-                ChunkyAction(
-                    label = "Clear",
-                    color = pal.pink,
-                    onClick = {
-                        showClearWarn = false
-                        cacheScope.launch(Dispatchers.IO) {
-                            NebulaApplication.clearCache()
-                            cacheSize = 0
-                            cacheCleared = true
-                        }
-                    }
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                ChunkyAction(
-                    label = "Cancel",
-                    // pal.bg, not pal.surface: the window itself is surface-coloured, so a
-                    // surface Cancel would disappear into the background.
-                    color = pal.bg,
-                    onClick = { showClearWarn = false }
-                )
-            }
         }
     }
 
@@ -1210,6 +875,1180 @@ fun SettingsScreen(
             }
         )
     }
+}
+
+/**
+ * Your account: sign in to YouTube, or manage the signed-in account.
+ * Opens LoginScreen, which lives behind the YtAuth seam. The whole card is the
+ * tap target; the old version only made the MANAGE label tappable.
+ */
+@Composable
+private fun AccountSection(pal: VoxPalette, auth: YtAuth, onSignIn: () -> Unit) {
+    SettingsHeader(title = "Your account", pal = pal)
+
+    Spacer(modifier = Modifier.height(10.dp))
+
+    val ytSignedIn by auth.isLoggedIn.collectAsState(initial = false)
+    val ytAccount by auth.currentAccount.collectAsState(initial = null)
+    Box {
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .offset(x = 4.dp, y = 4.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(MaterialTheme.colorScheme.outline)
+        )
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(16.dp))
+                .background(pal.surface)
+                .border(3.dp, BorderBlack, RoundedCornerShape(16.dp))
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onSignIn() }
+                    .padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.AccountCircle,
+                    contentDescription = null,
+                    tint = pal.onSurface,
+                    modifier = Modifier.size(22.dp)
+                )
+                Spacer(modifier = Modifier.width(10.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        ytAccount?.name?.takeIf { ytSignedIn } ?: "Your account",
+                        fontWeight = FontWeight.Black,
+                        fontSize = 15.sp,
+                        color = pal.onSurface
+                    )
+                    Text(
+                        if (ytSignedIn) ytAccount?.email ?: "Signed in"
+                        else "Sign in to sync playlists and history with YouTube",
+                        fontSize = 11.sp,
+                        color = pal.onSurface.copy(alpha = 0.65f)
+                    )
+                }
+                Text(
+                    if (ytSignedIn) "MANAGE" else "SIGN IN",
+                    modifier = Modifier.padding(8.dp),
+                    fontWeight = FontWeight.Black,
+                    fontSize = 13.sp,
+                    color = pal.pink
+                )
+            }
+        }
+    }
+}
+
+/** Navigation: the Customize Tabs button, which opens the tab customizer overlay. */
+@Composable
+private fun NavigationSection(pal: VoxPalette, onCustomizeTabs: () -> Unit) {
+    // Customize Navigation Tabs button
+    Box {
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .offset(x = 4.dp, y = 4.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(MaterialTheme.colorScheme.outline)
+        )
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(16.dp))
+                .background(pal.surface)
+                .border(3.dp, BorderBlack, RoundedCornerShape(16.dp))
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.QueueMusic,
+                    contentDescription = null,
+                    tint = pal.onSurface,
+                    modifier = Modifier.size(22.dp)
+                )
+                Spacer(modifier = Modifier.width(10.dp))
+                Column {
+                    Text(
+                        "Navigation Tabs",
+                        fontWeight = FontWeight.Black,
+                        fontSize = 15.sp,
+                        color = pal.onSurface
+                    )
+                    Text(
+                        "Reorder & hide tabs",
+                        fontSize = 11.sp,
+                        color = pal.onSurface
+                    )
+                }
+            }
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(3.dp)
+                    .background(BorderBlack)
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(10.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(44.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(pal.yellow)
+                        .border(3.dp, BorderBlack, RoundedCornerShape(12.dp))
+                        .clickable { onCustomizeTabs() },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("CUSTOMIZE TABS", fontWeight = FontWeight.Black, fontSize = 14.sp, color = pal.onSurface)
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Storage & Downloads: cache size with a chunky clear button (guarded by the
+ * warning window), and the WiFi-only downloads toggle.
+ */
+@Composable
+private fun StorageDownloadsSection(pal: VoxPalette) {
+    SettingsHeader(title = "Storage & Downloads", pal = pal)
+
+    Spacer(modifier = Modifier.height(10.dp))
+
+    // Storage & Cache — shows current cache size and a chunky clear button.
+    // Clearing asks first (mini warning window) and runs off the main thread.
+    var cacheSize by remember { mutableStateOf(calculateCacheSize()) }
+    var cacheCleared by remember { mutableStateOf(false) }
+    var showClearWarn by remember { mutableStateOf(false) }
+    val cacheScope = rememberCoroutineScope()
+    val cacheShape = RoundedCornerShape(16.dp)
+    Box {
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .offset(x = 4.dp, y = 4.dp)
+                .clip(cacheShape)
+                .background(MaterialTheme.colorScheme.outline)
+        )
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(cacheShape)
+                .background(pal.surface)
+                .border(3.dp, BorderBlack, cacheShape)
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Storage,
+                    contentDescription = null,
+                    tint = pal.onSurface,
+                    modifier = Modifier.size(22.dp)
+                )
+                Spacer(modifier = Modifier.width(10.dp))
+                Column {
+                    Text(
+                        "Storage & Cache",
+                        fontWeight = FontWeight.Black,
+                        fontSize = 15.sp,
+                        color = pal.onSurface
+                    )
+                    Text(
+                        "Cache size: $cacheSize MB",
+                        fontSize = 11.sp,
+                        color = pal.onSurface
+                    )
+                }
+            }
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(3.dp)
+                    .background(BorderBlack)
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(10.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(44.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(pal.yellow)
+                        .border(3.dp, BorderBlack, RoundedCornerShape(12.dp))
+                        .clickable { showClearWarn = true },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Delete,
+                            contentDescription = null,
+                            tint = pal.onSurface,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Text("CLEAR CACHE", fontWeight = FontWeight.Black, fontSize = 14.sp, color = pal.onSurface)
+                    }
+                }
+            }
+            if (cacheCleared) {
+                Text(
+                    "Cache cleared!",
+                    fontSize = 11.sp,
+                    color = pal.onSurface,
+                    modifier = Modifier.padding(start = 10.dp, end = 10.dp, bottom = 10.dp)
+                )
+            }
+        }
+    }
+
+    Spacer(modifier = Modifier.height(16.dp))
+
+    // WiFi-only downloads toggle — prevents downloads on mobile data
+    val wifiOnly by DownloadPrefs.wifiOnly.collectAsState(initial = false)
+    val downloadScope = rememberCoroutineScope()
+    Box {
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .offset(x = 4.dp, y = 4.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(MaterialTheme.colorScheme.outline)
+        )
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(16.dp))
+                .background(pal.surface)
+                .border(3.dp, BorderBlack, RoundedCornerShape(16.dp))
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Storage,
+                    contentDescription = null,
+                    tint = pal.onSurface,
+                    modifier = Modifier.size(22.dp)
+                )
+                Spacer(modifier = Modifier.width(10.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "WiFi-only downloads",
+                        fontWeight = FontWeight.Black,
+                        fontSize = 15.sp,
+                        color = pal.onSurface
+                    )
+                    Text(
+                        "Only download on WiFi",
+                        fontSize = 11.sp,
+                        color = pal.onSurface
+                    )
+                }
+                Switch(
+                    checked = wifiOnly,
+                    onCheckedChange = { enabled ->
+                        downloadScope.launch {
+                            DownloadPrefs.setWifiOnly(enabled)
+                            NebulaDownloads.setWifiOnly(enabled)
+                        }
+                    },
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = pal.yellow,
+                        checkedTrackColor = pal.yellow.copy(alpha = 0.5f),
+                        uncheckedThumbColor = pal.onSurface,
+                        uncheckedTrackColor = pal.onSurface.copy(alpha = 0.3f)
+                    )
+                )
+            }
+        }
+    }
+
+    // Mini warning window before wiping downloaded song data: ChunkyWindow, not
+    // AlertDialog — this is the app's own window idiom.
+    if (showClearWarn) {
+        ChunkyWindow(
+            title = "Clear cache?",
+            onDismissRequest = { showClearWarn = false }
+        ) {
+            Text(
+                "Cached songs will re-download on next play. Playback and playlists are unaffected.",
+                fontSize = 13.sp,
+                color = pal.onSurface
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            ChunkyAction(
+                label = "Clear",
+                color = pal.pink,
+                onClick = {
+                    showClearWarn = false
+                    cacheScope.launch(Dispatchers.IO) {
+                        NebulaApplication.clearCache()
+                        cacheSize = 0
+                        cacheCleared = true
+                    }
+                }
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            ChunkyAction(
+                label = "Cancel",
+                // pal.bg, not pal.surface: the window itself is surface-coloured, so a
+                // surface Cancel would disappear into the background.
+                color = pal.bg,
+                onClick = { showClearWarn = false }
+            )
+        }
+    }
+}
+
+/**
+ * Playback & Home: the autoplay toggle, the music-genre picker (a ChunkyWindow
+ * that refreshes the home feed on save), and per-playlist visibility on Home.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun PlaybackHomeSection(
+    pal: VoxPalette,
+    playerVm: PlayerViewModel,
+    homeVm: HomeViewModel,
+    playlistsVm: PlaylistsViewModel?
+) {
+    val context = LocalContext.current
+    // Genre picker state — dialog fetches the live grid once per open
+    var genreOpen by remember { mutableStateOf(false) }
+    var blockedOpen by remember { mutableStateOf(false) }
+    var genreList by remember { mutableStateOf<List<GenreItem>>(emptyList()) }
+    var genreSelected by remember { mutableStateOf(OnboardingStore.selectedGenres.toSet()) }
+    var genreLoading by remember { mutableStateOf(false) }
+
+    SettingsHeader(title = "Playback", pal = pal)
+
+    Spacer(modifier = Modifier.height(10.dp))
+
+    // Autoplay: at the end of the queue, wrap back to the top instead of stopping.
+    // Same card idiom as the WiFi toggle above.
+    Box {
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .offset(x = 4.dp, y = 4.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(MaterialTheme.colorScheme.outline)
+        )
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(16.dp))
+                .background(pal.surface)
+                .border(3.dp, BorderBlack, RoundedCornerShape(16.dp))
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Autorenew,
+                    contentDescription = null,
+                    tint = pal.onSurface,
+                    modifier = Modifier.size(22.dp)
+                )
+                Spacer(modifier = Modifier.width(10.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "Autoplay",
+                        fontWeight = FontWeight.Black,
+                        fontSize = 15.sp,
+                        color = pal.onSurface
+                    )
+                    Text(
+                        "Play the queue again when it ends",
+                        fontSize = 11.sp,
+                        color = pal.onSurface
+                    )
+                }
+                Switch(
+                    checked = playerVm.autoplayOn,
+                    onCheckedChange = { playerVm.toggleAutoplay() },
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = pal.yellow,
+                        checkedTrackColor = pal.yellow.copy(alpha = 0.5f),
+                        uncheckedThumbColor = pal.onSurface,
+                        uncheckedTrackColor = pal.onSurface.copy(alpha = 0.3f)
+                    )
+                )
+            }
+            // Pause history shares the autoplay card (same switch idiom, one divider
+            // between rows — the pattern the Home playlists card already uses).
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(3.dp)
+                    .background(BorderBlack)
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.History,
+                    contentDescription = null,
+                    tint = pal.onSurface,
+                    modifier = Modifier.size(22.dp)
+                )
+                Spacer(modifier = Modifier.width(10.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "Pause history",
+                        fontWeight = FontWeight.Black,
+                        fontSize = 15.sp,
+                        color = pal.onSurface
+                    )
+                    Text(
+                        "Stop recording what you play",
+                        fontSize = 11.sp,
+                        color = pal.onSurface
+                    )
+                }
+                Switch(
+                    checked = playerVm.pauseHistory,
+                    onCheckedChange = { playerVm.togglePauseHistory() },
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = pal.yellow,
+                        checkedTrackColor = pal.yellow.copy(alpha = 0.5f),
+                        uncheckedThumbColor = pal.onSurface,
+                        uncheckedTrackColor = pal.onSurface.copy(alpha = 0.3f)
+                    )
+                )
+            }
+            // Crossfade takes the third slot on the same card: same switch idiom,
+            // same divider — one "how playback behaves" card instead of three.
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(3.dp)
+                    .background(BorderBlack)
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Waves,
+                    contentDescription = null,
+                    tint = pal.onSurface,
+                    modifier = Modifier.size(22.dp)
+                )
+                Spacer(modifier = Modifier.width(10.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "Crossfade",
+                        fontWeight = FontWeight.Black,
+                        fontSize = 15.sp,
+                        color = pal.onSurface
+                    )
+                    Text(
+                        "Fade the last 3 seconds of every song",
+                        fontSize = 11.sp,
+                        color = pal.onSurface
+                    )
+                }
+                Switch(
+                    checked = playerVm.crossfadeOn,
+                    onCheckedChange = { playerVm.toggleCrossfade() },
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = pal.yellow,
+                        checkedTrackColor = pal.yellow.copy(alpha = 0.5f),
+                        uncheckedThumbColor = pal.onSurface,
+                        uncheckedTrackColor = pal.onSurface.copy(alpha = 0.3f)
+                    )
+                )
+            }
+        }
+    }
+
+    Spacer(modifier = Modifier.height(16.dp))
+
+    SettingsHeader(title = "Home & Library", pal = pal)
+
+    Spacer(modifier = Modifier.height(10.dp))
+
+    // Music genres — same card idiom as the WiFi toggle above. Opens a
+    // ChunkyWindow picker; saving refreshes the home feed immediately.
+    Box {
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .offset(x = 4.dp, y = 4.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(MaterialTheme.colorScheme.outline)
+        )
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(16.dp))
+                .background(pal.surface)
+                .border(3.dp, BorderBlack, RoundedCornerShape(16.dp))
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.QueueMusic,
+                    contentDescription = null,
+                    tint = pal.onSurface,
+                    modifier = Modifier.size(22.dp)
+                )
+                Spacer(modifier = Modifier.width(10.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "Music genres",
+                        fontWeight = FontWeight.Black,
+                        fontSize = 15.sp,
+                        color = pal.onSurface
+                    )
+                    Text(
+                        if (OnboardingStore.selectedGenres.isEmpty()) "Shapes your home feed"
+                        else OnboardingStore.selectedGenres.joinToString(", "),
+                        fontSize = 11.sp,
+                        color = pal.onSurface
+                    )
+                }
+                Text(
+                    "CHANGE",
+                    modifier = Modifier
+                        .clickable {
+                            genreSelected = OnboardingStore.selectedGenres.toSet()
+                            genreOpen = true
+                        }
+                        .padding(8.dp),
+                    fontWeight = FontWeight.Black,
+                    fontSize = 13.sp,
+                    color = pal.pink
+                )
+            }
+        }
+    }
+
+    // Blacklist management. A blocked song is filtered out of Search and Home — the
+    // very lists its menu lives on — so this list is the only way back once it is
+    // hidden. Mirror of the genres card above: trailing pink verb opens the window.
+    Box {
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .offset(x = 4.dp, y = 4.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(MaterialTheme.colorScheme.outline)
+        )
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(16.dp))
+                .background(pal.surface)
+                .border(3.dp, BorderBlack, RoundedCornerShape(16.dp))
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Block,
+                    contentDescription = null,
+                    tint = pal.onSurface,
+                    modifier = Modifier.size(22.dp)
+                )
+                Spacer(modifier = Modifier.width(10.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "Blocked songs",
+                        fontWeight = FontWeight.Black,
+                        fontSize = 15.sp,
+                        color = pal.onSurface
+                    )
+                    Text(
+                        if (BlockedSongs.songs.isEmpty()) "Nothing hidden yet"
+                        else "${BlockedSongs.songs.size} hidden from Search & Home",
+                        fontSize = 11.sp,
+                        color = pal.onSurface
+                    )
+                }
+                Text(
+                    "MANAGE",
+                    modifier = Modifier
+                        .clickable { blockedOpen = true }
+                        .padding(8.dp),
+                    fontWeight = FontWeight.Black,
+                    fontSize = 13.sp,
+                    color = pal.pink
+                )
+            }
+        }
+    }
+
+    if (blockedOpen) {
+        ChunkyWindow(
+            title = "Blocked songs",
+            onDismissRequest = { blockedOpen = false }
+        ) {
+            if (BlockedSongs.songs.isEmpty()) {
+                Text(
+                    "Nothing blocked",
+                    fontWeight = FontWeight.Black,
+                    fontSize = 14.sp,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp)
+                )
+            } else {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 320.dp)
+                        .verticalScroll(rememberScrollState())
+                ) {
+                    BlockedSongs.songs.forEach { entry ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 20.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    entry.title,
+                                    fontWeight = FontWeight.Black,
+                                    fontSize = 14.sp,
+                                    maxLines = 1,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Text(
+                                    entry.artist.ifBlank { "Unknown artist" },
+                                    fontSize = 11.sp,
+                                    maxLines = 1,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.62f)
+                                )
+                            }
+                            TextButton(onClick = { BlockedSongs.unblock(entry.videoId) }) {
+                                Text(
+                                    "UNBLOCK",
+                                    fontWeight = FontWeight.Black,
+                                    fontSize = 12.sp,
+                                    color = pal.pink
+                                )
+                            }
+                        }
+                    }
+                }
+                TextButton(
+                    onClick = { blockedOpen = false },
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                ) {
+                    Text(
+                        "DONE",
+                        fontWeight = FontWeight.Black,
+                        fontSize = 13.sp,
+                        color = pal.pink
+                    )
+                }
+            }
+        }
+    }
+
+    if (genreOpen) {
+        LaunchedEffect(Unit) {
+            genreLoading = true
+            genreList = SearchRepository().moodAndGenres()
+            genreLoading = false
+        }
+        ChunkyWindow(
+            title = "Music genres",
+            onDismissRequest = { genreOpen = false }
+        ) {
+            if (genreLoading) {
+                Text("Loading genres...", fontSize = 13.sp, color = pal.onSurface)
+            } else {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 320.dp)
+                        .verticalScroll(rememberScrollState())
+                ) {
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        genreList.forEach { genre ->
+                            val isSelected = genre.title in genreSelected
+                            HomeFilterChip(
+                                label = genre.title,
+                                selected = isSelected,
+                                onClick = {
+                                    genreSelected =
+                                        if (isSelected) genreSelected - genre.title
+                                        else genreSelected + genre.title
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+            ChunkyAction(
+                label = "Save",
+                color = pal.pink,
+                onClick = {
+                    genreOpen = false
+                    val endpoints = genreList
+                        .filter { it.title in genreSelected }
+                        .map { Triple(it.title, it.browseId, it.params) }
+                    OnboardingStore.complete(context, endpoints)
+                    if (endpoints.isNotEmpty()) homeVm.loadPersonalized()
+                    else homeVm.load(null)
+                }
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            ChunkyAction(
+                label = "Cancel",
+                color = pal.bg,
+                onClick = { genreOpen = false }
+            )
+        }
+    }
+
+    Spacer(modifier = Modifier.height(16.dp))
+
+    // Your-playlists visibility — master switch for the Home section plus
+    // one row per playlist. Same card idiom as the WiFi toggle above.
+    val homePlaylists = playlistsVm?.playlists?.collectAsState()?.value.orEmpty()
+    val visibleCount =
+        homePlaylists.count { HomePrefs.isVisible(it.playlist.id, it.playlist.isSystem) }
+    Box {
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .offset(x = 4.dp, y = 4.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(MaterialTheme.colorScheme.outline)
+        )
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(16.dp))
+                .background(pal.surface)
+                .border(3.dp, BorderBlack, RoundedCornerShape(16.dp))
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.QueueMusic,
+                    contentDescription = null,
+                    tint = pal.onSurface,
+                    modifier = Modifier.size(22.dp)
+                )
+                Spacer(modifier = Modifier.width(10.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "Your playlists on Home",
+                        fontWeight = FontWeight.Black,
+                        fontSize = 15.sp,
+                        color = pal.onSurface
+                    )
+                    Text(
+                        if (homePlaylists.isEmpty()) "No playlists yet"
+                        else "$visibleCount of ${homePlaylists.size} shown",
+                        fontSize = 11.sp,
+                        color = pal.onSurface
+                    )
+                }
+                Switch(
+                    checked = HomePrefs.showYourPlaylists,
+                    onCheckedChange = { enabled ->
+                        HomePrefs.setShowYourPlaylists(context, enabled)
+                    },
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = pal.yellow,
+                        checkedTrackColor = pal.yellow.copy(alpha = 0.5f),
+                        uncheckedThumbColor = pal.onSurface,
+                        uncheckedTrackColor = pal.onSurface.copy(alpha = 0.3f)
+                    )
+                )
+            }
+            if (homePlaylists.isNotEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(3.dp)
+                        .background(BorderBlack)
+                )
+                homePlaylists.forEach { entry ->
+                    val visible =
+                        HomePrefs.isVisible(entry.playlist.id, entry.playlist.isSystem)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                entry.playlist.name,
+                                fontWeight = FontWeight.Black,
+                                fontSize = 14.sp,
+                                color = pal.onSurface
+                            )
+                            Text(
+                                "${entry.songCount} songs",
+                                fontSize = 11.sp,
+                                color = pal.onSurface
+                            )
+                        }
+                        Switch(
+                            checked = visible,
+                            onCheckedChange = { show ->
+                                HomePrefs.setVisible(
+                                    context, entry.playlist.id, entry.playlist.isSystem, show
+                                )
+                            },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = pal.yellow,
+                                checkedTrackColor = pal.yellow.copy(alpha = 0.5f),
+                                uncheckedThumbColor = pal.onSurface,
+                                uncheckedTrackColor = pal.onSurface.copy(alpha = 0.3f)
+                            )
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    Spacer(modifier = Modifier.height(16.dp))
+
+    // Echo-style horizontal scroll layout for Home sections.
+    Box {
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .offset(x = 4.dp, y = 4.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(MaterialTheme.colorScheme.outline)
+        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(16.dp))
+                .background(pal.surface)
+                .border(3.dp, BorderBlack, RoundedCornerShape(16.dp))
+                .padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = Icons.Filled.QueueMusic,
+                contentDescription = null,
+                tint = pal.onSurface,
+                modifier = Modifier.size(22.dp)
+            )
+            Spacer(modifier = Modifier.width(10.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    "Horizontal scroll layout",
+                    fontWeight = FontWeight.Black,
+                    fontSize = 15.sp,
+                    color = pal.onSurface
+                )
+                Text(
+                    "Horizontal feed layout",
+                    fontSize = 11.sp,
+                    color = pal.onSurface
+                )
+            }
+            Switch(
+                checked = HomePrefs.horizontalScrollLayout,
+                onCheckedChange = { enabled ->
+                    HomePrefs.setHorizontalScrollLayout(context, enabled)
+                },
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = pal.yellow,
+                    checkedTrackColor = pal.yellow.copy(alpha = 0.5f),
+                    uncheckedThumbColor = pal.onSurface,
+                    uncheckedTrackColor = pal.onSurface.copy(alpha = 0.3f)
+                )
+            )
+        }
+    }
+
+    Spacer(modifier = Modifier.height(16.dp))
+
+    // Equalizer button in the now-playing sheet header.
+    val eqCtx = LocalContext.current
+    Box {
+        Box(
+            modifier = Modifier.matchParentSize().offset(x = 4.dp, y = 4.dp).clip(RoundedCornerShape(16.dp))
+                .background(MaterialTheme.colorScheme.outline)
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(pal.surface)
+                .border(3.dp, BorderBlack, RoundedCornerShape(16.dp))
+                .padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(Icons.Filled.Equalizer, contentDescription = null, tint = pal.onSurface, modifier = Modifier.size(22.dp))
+            Spacer(modifier = Modifier.width(10.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Equalizer", fontWeight = FontWeight.Black, fontSize = 15.sp, color = pal.onSurface)
+                Text("Show Equalizer button in player", fontSize = 11.sp, color = pal.onSurface)
+            }
+            Switch(
+                checked = HomePrefs.equalizerEnabled,
+                onCheckedChange = { enabled -> HomePrefs.setEqualizerEnabled(eqCtx, enabled) },
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = pal.yellow,
+                    checkedTrackColor = pal.yellow.copy(alpha = 0.5f),
+                    uncheckedThumbColor = pal.onSurface,
+                    uncheckedTrackColor = pal.onSurface.copy(alpha = 0.3f)
+                )
+            )
+        }
+    }
+}
+
+/**
+ * Backup & Update: one JSON file through the system picker (playlists plus every
+ * personalization setting — no accounts, no servers), then the updater section.
+ */
+@Composable
+private fun BackupUpdateSection(
+    pal: VoxPalette,
+    playlistsVm: PlaylistsViewModel?,
+    homeVm: HomeViewModel
+) {
+    val context = LocalContext.current
+
+    SettingsHeader(title = "Backup & Restore", pal = pal)
+
+    Spacer(modifier = Modifier.height(10.dp))
+
+    // Backup & restore — one JSON file through the system picker: playlists
+    // plus every personalization setting. No accounts, no servers.
+    val backupScope = rememberCoroutineScope()
+    var pendingBackup by remember { mutableStateOf<String?>(null) }
+    val exportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json")
+    ) { uri ->
+        val json = pendingBackup
+        if (uri != null && json != null) {
+            context.contentResolver.openOutputStream(uri)?.use { stream ->
+                stream.write(json.toByteArray())
+            }
+            Toast.makeText(context, "Backup saved", Toast.LENGTH_SHORT).show()
+        }
+        pendingBackup = null
+    }
+    val importLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri == null || playlistsVm == null) return@rememberLauncherForActivityResult
+        backupScope.launch(Dispatchers.IO) {
+            val text = context.contentResolver.openInputStream(uri)
+                ?.bufferedReader()?.readText()
+            val backup = text?.let { BackupManager.import(it) }
+            if (backup == null) {
+                backupScope.launch(Dispatchers.Main) {
+                    Toast.makeText(context, "Invalid backup file", Toast.LENGTH_SHORT).show()
+                }
+                return@launch
+            }
+            for (bp in backup.playlists) {
+                playlistsVm.createWithSongs(
+                    bp.name,
+                    bp.songs.map {
+                        SearchResult(it.videoId, it.title, it.artist, it.thumb, addedAt = it.addedAt)
+                    }
+                )
+            }
+            val s = backup.settings
+            OnboardingStore.restoreRaw(context, s.genres, s.artists)
+            ThemeStore.setMode(context, s.themeMode)
+            ThemeStore.setPalette(context, s.paletteId)
+            if (s.customColors.size == 7) {
+                ThemeStore.setCustom(
+                    context,
+                    VoxCustom(
+                        s.customColors[0], s.customColors[1], s.customColors[2],
+                        s.customColors[3], s.customColors[4], s.customColors[5],
+                        s.customColors[6]
+                    )
+                )
+            }
+            if (s.tabOrder.isNotBlank()) {
+                context.settingsNavDataStore.edit { prefs ->
+                    prefs[stringPreferencesKey("tab_order")] = s.tabOrder
+                }
+            }
+            HomePrefs.restore(
+                context, s.homeShow,
+                s.homeVisibility.split(",").mapNotNull { entry ->
+                    val (id, v) = entry.split("=").takeIf { it.size == 2 }
+                        ?: return@mapNotNull null
+                    id.toLongOrNull()?.let { it to (v == "1") }
+                }.toMap()
+            )
+            DownloadPrefs.setWifiOnly(s.wifiOnly)
+            NebulaDownloads.setWifiOnly(s.wifiOnly)
+            homeVm.loadPersonalized()
+            backupScope.launch(Dispatchers.Main) {
+                Toast.makeText(
+                    context,
+                    "Restored ${backup.playlists.size} playlists",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+        }
+    }
+    Box {
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .offset(x = 4.dp, y = 4.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(MaterialTheme.colorScheme.outline)
+        )
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(16.dp))
+                .background(pal.surface)
+                .border(3.dp, BorderBlack, RoundedCornerShape(16.dp))
+                .padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 10.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = Icons.Filled.Storage,
+                    contentDescription = null,
+                    tint = pal.onSurface,
+                    modifier = Modifier.size(22.dp)
+                )
+                Spacer(modifier = Modifier.width(10.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "Backup & restore",
+                        fontWeight = FontWeight.Black,
+                        fontSize = 15.sp,
+                        color = pal.onSurface
+                    )
+                    Text(
+                        "Playlists plus all settings, one file",
+                        fontSize = 11.sp,
+                        color = pal.onSurface
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.height(10.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Box(modifier = Modifier.weight(1f)) {
+                    ChunkyAction(
+                        label = "Export",
+                        color = pal.cyan,
+                        onClick = {
+                            backupScope.launch(Dispatchers.IO) {
+                                val list = playlistsVm?.playlists?.value.orEmpty()
+                                    .filter { !it.playlist.isSystem }
+                                val bps = list.map { e ->
+                                    val songs = playlistsVm!!.songsOf(e.playlist.id)
+                                    BackupManager.BackupPlaylist(
+                                        e.playlist.name,
+                                        songs.map {
+                                            BackupManager.BackupSong(
+                                                it.videoId, it.title, it.artist,
+                                                it.thumbnailUrl, it.addedAt
+                                            )
+                                        }
+                                    )
+                                }
+                                val tabs = try {
+                                    context.settingsNavDataStore.data.first()
+                                        .get(stringPreferencesKey("tab_order")).orEmpty()
+                                } catch (_: Exception) {
+                                    ""
+                                }
+                                pendingBackup = BackupManager.export(
+                                    bps,
+                                    BackupManager.BackupSettings(
+                                        genres = OnboardingStore.rawGenres(),
+                                        artists = OnboardingStore.rawArtists(),
+                                        themeMode = ThemeStore.mode,
+                                        paletteId = ThemeStore.paletteId,
+                                        customColors = slotsOf(ThemeStore.custom).map { it.second },
+                                        tabOrder = tabs,
+                                        homeShow = HomePrefs.showYourPlaylists,
+                                        homeVisibility = HomePrefs.visibilityOverrides.entries
+                                            .joinToString(",") { (k, v) -> "$k=${if (v) 1 else 0}" },
+                                        wifiOnly = DownloadPrefs.wifiOnly.value
+                                    )
+                                )
+                                exportLauncher.launch("nebula-backup.json")
+                            }
+                        }
+                    )
+                }
+                Box(modifier = Modifier.weight(1f)) {
+                    ChunkyAction(
+                        label = "Import",
+                        color = pal.bg,
+                        onClick = { importLauncher.launch(arrayOf("application/json")) }
+                    )
+                }
+            }
+        }
+    }
+
+    Spacer(modifier = Modifier.height(16.dp))
+
+    UpdateSettingsSection(pal = pal)
 }
 
 // ---- Section headers + About rows ----
@@ -1308,6 +2147,9 @@ private fun currentIcon(context: Context): Int {
     return 1
 }
 
+/** Escape hatch: re-enables alias 1, which is what Android Studio's Run button targets. */
+private fun resetAppIcon(context: Context) = setAppIcon(context, 1)
+
 // Enable the picked alias FIRST, so the launcher never sees a moment with zero icons.
 private fun setAppIcon(context: Context, chosen: Int) {
     val pm = context.packageManager
@@ -1317,6 +2159,10 @@ private fun setAppIcon(context: Context, chosen: Int) {
         PackageManager.DONT_KILL_APP
     )
     appIconAliases.forEachIndexed { i, name ->
+        // Every non-picked alias is disabled, so exactly one icon shows on the home screen.
+        // That includes alias 0 — and Android Studio launches the FIRST main/launcher entry
+        // BY NAME from the merged manifest, ignoring device state, so picking 2 or 3 breaks
+        // the Run button until "Reset launcher icon" is tapped. See resetAppIcon below.
         if (i != chosen - 1) pm.setComponentEnabledSetting(
             ComponentName(context, name),
             PackageManager.COMPONENT_ENABLED_STATE_DISABLED,

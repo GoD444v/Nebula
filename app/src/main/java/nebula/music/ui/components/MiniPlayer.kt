@@ -18,10 +18,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -43,7 +43,7 @@ import nebula.music.viewmodel.PlayerViewModel
 // ponytail: extracted from MainActivity verbatim so the call site stays one line
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun MiniPlayer(vm: PlayerViewModel, onOpen: () -> Unit, onOpenQueue: () -> Unit = {}) {
+fun MiniPlayer(vm: PlayerViewModel, onOpen: () -> Unit) {
     val onSurface = MaterialTheme.colorScheme.onSurface
     val surface = MaterialTheme.colorScheme.surface
 
@@ -83,8 +83,12 @@ fun MiniPlayer(vm: PlayerViewModel, onOpen: () -> Unit, onOpenQueue: () -> Unit 
                 contentAlignment = Alignment.Center
             ) {
                 if (vm.currentVideoId.isNotBlank()) {
+                    // Queue artwork first: a local song's videoId is "local:content://…",
+                    // so the i.ytimg URL below would 404 for every song off the device.
+                    val artModel = vm.currentSong()?.thumbnailUrl?.takeIf { it.isNotBlank() }
+                        ?: "https://i.ytimg.com/vi/${vm.currentVideoId}/mqdefault.jpg"
                     SubcomposeAsyncImage(
-                        model = "https://i.ytimg.com/vi/${vm.currentVideoId}/mqdefault.jpg",
+                        model = artModel,
                         contentDescription = vm.currentSongTitle,
                         contentScale = ContentScale.Crop,
                         modifier = Modifier.fillMaxSize(),
@@ -105,6 +109,9 @@ fun MiniPlayer(vm: PlayerViewModel, onOpen: () -> Unit, onOpenQueue: () -> Unit 
                     color = onSurface,
                     modifier = Modifier.basicMarquee()
                 )
+            }
+            IconButton(onClick = { vm.previous() }, modifier = Modifier.size(40.dp)) {
+                Icon(Icons.Filled.SkipPrevious, contentDescription = "Previous", tint = onSurface, modifier = Modifier.size(22.dp))
             }
             // Chunky play/pause in the app's own idiom (3px border + 4dp extrusion).
             // Filled with `secondary` (the palette's cyan/teal), NOT `primary`:
@@ -136,14 +143,6 @@ fun MiniPlayer(vm: PlayerViewModel, onOpen: () -> Unit, onOpenQueue: () -> Unit 
                         modifier = Modifier.size(24.dp)
                     )
                 }
-            }
-            IconButton(onClick = onOpenQueue, modifier = Modifier.size(40.dp)) {
-                Icon(
-                    Icons.AutoMirrored.Filled.QueueMusic,
-                    contentDescription = "Queue",
-                    tint = onSurface,
-                    modifier = Modifier.size(22.dp)
-                )
             }
             IconButton(onClick = { vm.next() }, modifier = Modifier.size(40.dp)) {
                 Icon(Icons.Filled.SkipNext, contentDescription = "Next", tint = onSurface, modifier = Modifier.size(22.dp))

@@ -15,7 +15,6 @@
 ## Clean Room (legal safety)
 - Reference code lives ONLY at `C:\Users\Vignesh\Desktop\app\music\` (`VoxMusic-main/`, `Echo-Music-main/`, `Metrolist-main/`, `PixelPlayer-master/`).
 - NEVER copy-paste from there into Nebula. Use as conceptual inspiration only. Write 100% original code.
-- Do not vendor reference files into this repo. Do not read reference repos file-by-file unless user asks for a specific concept.
 
 ## Design System (VoxMusic aesthetic — enforce)
 - Backgrounds: Cream `#FFF6E9` (light) / AMOLED Black `#000000` (dark, not `#121212`).

@@ -18,12 +18,20 @@ data class SearchResult(
      */
     val browseId: String = "",
     val pageType: String = "",
+    val artistBrowseId: String = "",
+    val albumBrowseId: String = "",
     /**
      * Times played. Always 0 today — nothing increments it yet — but the Play time sort
      * and the song info dialog both read it, so adding tracking later needs no change to
      * either. Not persisted: it is derived state, not something a caller sets.
      */
     val playCount: Int = 0,
+    /**
+     * YouTube's per-row handle for a song inside a playlist. Needed to remove that
+     * one song from that one playlist (removePlaylistSong takes it). Empty for
+     * everything that is not a YouTube playlist row.
+     */
+    val setVideoId: String = "",
     /**
      * When this song was added to its playlist, in epoch millis.
      *

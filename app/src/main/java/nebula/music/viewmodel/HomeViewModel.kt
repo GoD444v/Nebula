@@ -1,7 +1,9 @@
 ﻿package nebula.music.viewmodel
 
+import androidx.compose.runtime.snapshotFlow
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import nebula.music.data.BlockedSongs
 import nebula.music.data.SearchRepository
 import nebula.music.data.models.HomeCard
 import nebula.music.data.models.HomeChip
@@ -37,11 +39,28 @@ class HomeViewModel(
     private val _selectedChip = MutableStateFlow<String?>(null)
     val selectedChip: StateFlow<String?> = _selectedChip.asStateFlow()
 
+    private val _isLoadingMore = MutableStateFlow(false)
+    val isLoadingMore: StateFlow<Boolean> = _isLoadingMore.asStateFlow()
+
     // Chips come back on every page; keep the list from the default feed pinned
     private var defaultChips: List<HomeChip> = emptyList()
     private var loadJob: Job? = null
+    // Playlist seeds outlive a single load: refresh, retry and chip-toggling all reload the
+    // feed, and passing emptyList() to any of them silently dropped every "Because you have
+    // X" section with no way back short of editing a playlist.
+    private var lastPlaylistSeeds: List<Pair<String, List<String>>> = emptyList()
 
     init {
+        // Live removal: blocking a song drops it from the feed on screen without a
+        // refresh. Unblock does not resurrect cards here — the next load brings them
+        // back. Same companion for SearchViewModel.
+        viewModelScope.launch {
+            snapshotFlow { BlockedSongs.songs }.collect {
+                val f = _feed.value ?: return@collect
+                val filtered = f.withoutBlocked()
+                if (filtered != f) _feed.value = filtered
+            }
+        }
         // Returning user with saved personalization gets the personalized feed;
         // everyone else gets the default. OnboardingStore.init runs in onCreate,
         // before any ViewModel exists, so in-memory state is ready here.
@@ -69,7 +88,7 @@ class HomeViewModel(
                 }
             } else {
                 if (params == null) defaultChips = result.chips
-                _feed.value = result.copy(chips = defaultChips.ifEmpty { result.chips })
+                _feed.value = result.copy(chips = defaultChips.ifEmpty { result.chips }).withoutBlocked()
                 _selectedChip.value = params
             }
             _isLoading.value = false
@@ -78,7 +97,23 @@ class HomeViewModel(
 
     /** Tapping the active chip jumps back to the default feed. */
     fun onChipSelected(chip: HomeChip) =
-        if (chip.params == _selectedChip.value) load(null) else load(chip.params)
+        if (chip.params == _selectedChip.value) reloadDefault() else load(chip.params)
+
+    fun loadMoreYouTubeItems(continuation: String?) {
+        if (continuation.isNullOrBlank() || _isLoadingMore.value) return
+        viewModelScope.launch {
+            _isLoadingMore.value = true
+            val next = try { repository.homeContinuation(continuation) } catch (_: Exception) { null }
+            val cur = _feed.value
+            if (next != null && cur != null && next.sections.isNotEmpty()) {
+                _feed.value = cur.copy(
+                    sections = cur.sections + next.sections.filter { ns -> cur.sections.none { it.title == ns.title } },
+                    continuation = next.continuation ?: cur.continuation
+                ).withoutBlocked()
+            }
+            _isLoadingMore.value = false
+        }
+    }
 
     /** Pull-to-refresh keeps the active chip filter — or the genre feed when unfiltered. */
     fun refresh() {
@@ -92,7 +127,7 @@ class HomeViewModel(
     private fun reloadDefault() {
         val saved = OnboardingStore.selectedGenreEndpoints
         if (saved.isNotEmpty() || OnboardingStore.artistSeeds.isNotEmpty()) {
-            loadPersonalized(emptyList())
+            loadPersonalized()
         } else {
             load(null)
         }
@@ -106,10 +141,12 @@ class HomeViewModel(
      *
      * @param playlistSeeds (playlist name, seed videoIds). Passed in because
      * playlists live behind PlaylistsViewModel and change over time; genres
-     * and artists come straight from the store.
+     * and artists come straight from the store. Null = keep the seeds from last
+     * time, which is what every reload from refresh / chip / settings must do.
      */
-    fun loadPersonalized(playlistSeeds: List<Pair<String, List<String>>> = emptyList()) {
+    fun loadPersonalized(playlistSeeds: List<Pair<String, List<String>>>? = null) {
         loadJob?.cancel()
+        if (playlistSeeds != null) lastPlaylistSeeds = playlistSeeds
         loadJob = viewModelScope.launch {
             _isLoading.value = true
             _errorMessage.value = null
@@ -128,7 +165,7 @@ class HomeViewModel(
                     }
                 }
             }.awaitAll().filter { it.cards.isNotEmpty() }
-            val playlistSections = playlistSeeds.map { (name, vids) ->
+            val playlistSections = lastPlaylistSeeds.map { (name, vids) ->
                 async { relatedSection("Because you have $name", vids) }
             }.awaitAll().filter { it.cards.isNotEmpty() }
             val artistSections = OnboardingStore.artistSeeds.map { (name, vids) ->
@@ -138,7 +175,7 @@ class HomeViewModel(
             _feed.value = home.copy(
                 chips = defaultChips,
                 sections = genreSections + playlistSections + artistSections + home.sections
-            )
+            ).withoutBlocked()
             _selectedChip.value = null
             _isLoading.value = false
         }
@@ -157,4 +194,12 @@ class HomeViewModel(
         }
         return HomeSection(title, cards)
     }
+
+    /** Cards whose videoId is blocked never reach a feed the user sees. Sections
+     *  emptied by the filter are dropped rather than shown as blank bands. */
+    private fun HomeFeed.withoutBlocked(): HomeFeed = copy(
+        sections = sections
+            .map { it.copy(cards = it.cards.filterNot { card -> BlockedSongs.isBlocked(card.videoId) }) }
+            .filter { it.cards.isNotEmpty() }
+    )
 }

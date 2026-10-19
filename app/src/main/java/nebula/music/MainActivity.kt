@@ -2,6 +2,7 @@
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.widget.Toast
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -71,20 +72,37 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import nebula.music.data.listen.ListenClient
+import nebula.music.data.listen.SyncManager
 import nebula.music.ui.components.MiniPlayer
 import nebula.music.ui.components.QueueSheet
 import nebula.music.ui.screens.AlbumDetailScreen
+import nebula.music.ui.screens.ArtistDetailScreen
 import nebula.music.ui.screens.FullSheetPlayer
+import nebula.music.ui.screens.ListenTogetherScreen
 import nebula.music.ui.screens.download.DownloadQueueScreen
 import nebula.music.ui.screens.DownloadedPlaylistScreen
 import nebula.music.ui.screens.HomeScreen
+import nebula.music.ui.screens.HistoryScreen
 import nebula.music.ui.screens.OnboardingScreen
+import nebula.music.ui.screens.LocalSongsScreen
 import nebula.music.ui.screens.PlaylistsScreen
 import nebula.music.ui.screens.SearchScreen
 import nebula.music.ui.screens.SettingsScreen
 import nebula.music.ui.screens.TabCustomizerScreen
 import nebula.music.ui.screens.allAvailableTabs
 import nebula.music.data.HomePrefs
+import nebula.music.data.SearchHistory
+import nebula.music.data.UpdateChecker
+import nebula.music.data.UpdatePrefs
+import nebula.music.data.UpdateResult
+import nebula.music.data.lyrics.LyricsProviderRegistry
+import androidx.lifecycle.lifecycleScope
+import nebula.music.data.auth.AccountLibrary
+import nebula.music.data.auth.YtAuth
+import nebula.music.data.auth.YtCookieAuth
+import nebula.music.data.auth.YtCookieStore
+import nebula.music.ui.screens.LoginScreen
 import nebula.music.ui.theme.BorderBlack
 import nebula.music.ui.theme.NebulaTheme
 import nebula.music.ui.theme.OnboardingStore
@@ -98,6 +116,10 @@ import nebula.music.viewmodel.PlayerViewModel
 // DataStore instance for navigation tab order — persists across app restarts
 private val android.content.Context.navDataStore: DataStore<Preferences> by preferencesDataStore(name = "nebula_nav")
 
+// YouTube's library page for the signed-in account's likes (same address
+// Echo browses for `FEmusic_liked_videos`).
+private const val LIKED_BROWSE_ID = "FEmusic_liked_videos"
+
 class MainActivity : ComponentActivity() {
     private val vm: PlayerViewModel by viewModels()
     private val notifPermission =
@@ -105,11 +127,33 @@ class MainActivity : ComponentActivity() {
     private val mediaPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
+    // YouTube account login — cookie session behind the YtAuth seam
+    // (Echo architecture). No Google SDK, no OAuth client IDs.
+    private val auth: YtAuth by lazy { YtCookieAuth() }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         ThemeStore.init(applicationContext)
         OnboardingStore.init(applicationContext)
         HomePrefs.init(applicationContext)
+        SearchHistory.init(applicationContext)
+        LyricsProviderRegistry.init(applicationContext)
+        YtCookieStore.init(applicationContext)
+        // Warm the account library now so the Playlists tab doesn't pay the
+        // 1-2s browse wait on first open.
+        if (YtCookieStore.hasSapisid()) AccountLibrary.load()
+        // Silent auto-check on start: stores the verdict so Settings can show
+        // "New update available" without the user opening the window.
+        UpdatePrefs.init(applicationContext)
+        lifecycleScope.launch {
+            if (UpdatePrefs.shouldAutoCheck(applicationContext)) {
+                val result = UpdateChecker.check(applicationContext)
+                if (result is UpdateResult.UpdateAvailable) {
+                    UpdatePrefs.setAvailable(true, result.latestVersion)
+                }
+                UpdatePrefs.setLastChecked("Just now")
+            }
+        }
         vm.attach(applicationContext)
         askNotificationPermission()
         askMediaPermission()
@@ -131,6 +175,8 @@ class MainActivity : ComponentActivity() {
             var showQueue by remember { mutableStateOf(false) }
             var showTabCustomizer by remember { mutableStateOf(false) }
             var showOnboarding by remember { mutableStateOf(!OnboardingStore.isDone) }
+            var showListenTogether by remember { mutableStateOf(false) }
+            var showLogin by remember { mutableStateOf(false) }
             // "downloads" is intentionally absent: it is no longer a nav tab —
             // it lives inside Playlists now (PlaylistsScreen's Downloads card).
             val defaultTabs = listOf("home", "search", "playlists", "settings")
@@ -142,6 +188,15 @@ class MainActivity : ComponentActivity() {
             // which is a YouTube browseId for AlbumDetailScreen — the two id spaces are
             // unrelated, so sharing one variable would invite a Long/String mixup.
             var playlistId by remember { mutableStateOf<Long?>(null) }
+
+            // Listen Together — WebSocket client + sync manager. Created once, live for
+            // the Activity's lifetime. The client connects to the public community server.
+            val listenClient = remember { ListenClient() }
+            val syncManager = remember { SyncManager(listenClient) }
+            vm.setSyncManager(syncManager)
+            // When a guest is approved, the host immediately pushes the room's
+            // current track/position so the guest doesn't sit on their own song.
+            syncManager.onSendCurrentTrack = { vm.broadcastCurrentTrackToRoom() }
 
             // Read saved tab order from DataStore on first composition
             LaunchedEffect(Unit) {
@@ -223,16 +278,25 @@ class MainActivity : ComponentActivity() {
             // There was NO BackHandler, so system back finished the activity and dumped
             // the user on the launcher. Back now: close the player sheet first, then walk
             // any tab back to Home, then close an open detail page. Only plain Home exits.
+            // Listen Together screen: back closes it before anything else.
+            BackHandler(enabled = showListenTogether) {
+                showListenTogether = false
+            }
             BackHandler(enabled = showSheet || screen != "home" || detailId != null || playlistId != null) {
                 when {
+                    showListenTogether -> showListenTogether = false
                     showSheet -> showSheet = false
+                    // A detail page is an OVERLAY: it never changes `screen`, so closing
+                    // it drops straight back to whatever tab is underneath — no tab
+                    // switch animation, which is what used to flash Home for half a
+                    // second on the way back to Playlists.
+                    detailId != null -> { detailId = null; detailTitle = "" }
                     // A playlist detail screen is reached from the Playlists tab, so back
                     // returns there rather than to Home.
                     screen == "playlist" -> { playlistId = null; screen = "playlists" }
                     // Downloads is entered from Playlists, so back goes there.
                     screen == "downloads" -> screen = "playlists"
-                    screen != "home" -> screen = "home"
-                    else -> { detailId = null; detailTitle = "" }
+                    else -> screen = "home"
                 }
             }
             NebulaTheme {
@@ -262,19 +326,10 @@ class MainActivity : ComponentActivity() {
                                     label = "tabswitch"
                                 ) { target ->
                                     when (target) {
+                                        // Detail pages are NOT rendered here — they are an
+                                        // overlay above this Box (see `DetailOverlay`), so
+                                        // opening one never changes `screen`.
                                         "home"      -> {
-                                            val dId = detailId
-                                            if (dId != null) {
-                                                AlbumDetailScreen(
-                                                    browseId = dId,
-                                                    title = detailTitle,
-                                                    vm = vm,
-                                                    // So the per-track menu's "Add to playlist"
-                                                    // has a playlist list to write into.
-                                                    playlistsVm = playlistsVm,
-                                                    onBack = { detailId = null }
-                                                )
-                                            } else {
                                                 HomeScreen(
                                                     vm,
                                                     playlistsVm = playlistsVm,
@@ -288,9 +343,10 @@ class MainActivity : ComponentActivity() {
                                                     onOpenPlaylist = { id ->
                                                         playlistId = id
                                                         screen = "playlist"
-                                                    }
+                                                    },
+                                                    onOpenHistory = { screen = "history" },
+                                                    onListenTogether = { screen = "listen_together" }
                                                 )
-                                            }
                                         }
                                         // Playing from search must not navigate. It used to set
                                          // screen = "home" on play, so tapping a result teleported the
@@ -302,22 +358,42 @@ class MainActivity : ComponentActivity() {
                                          "search"    -> SearchScreen(
                                             vm = vm,
                                             onPlayDone = { showSheet = true },
-                                            playlistsVm = playlistsVm
+                                            playlistsVm = playlistsVm,
+                                            onListenTogether = { screen = "listen_together" }
                                         )
                                         // Downloads is reached from the Playlists
                                         // card, not the nav bar — the route stays.
                                         "playlists" -> PlaylistsScreen(
                                             onOpenDownloads = { screen = "downloads" },
+                                            onOpenLocal = { screen = "local" },
+                                            // AlbumDetailScreen already renders any
+                                            // browse page by id, so liked songs reuse
+                                            // it — no separate screen, no new data code.
+                                            onOpenLiked = {
+                                                detailId = LIKED_BROWSE_ID
+                                                detailTitle = "Liked songs"
+                                            },
+                                            // A YouTube playlist is a browseId, so the
+                                            // existing detail screen opens and plays it.
+                                            onOpenYtPlaylist = { browseId, title ->
+                                                detailId = browseId
+                                                detailTitle = title
+                                            },
                                             onOpenPlaylist = { id ->
                                                 playlistId = id
                                                 screen = "playlist"
                                             }
                                         )
+                                        "local" -> LocalSongsScreen(
+                                            playerVm = vm,
+                                            onBack = { screen = "playlists" }
+                                        )
                                         "playlist" -> DownloadedPlaylistScreen(
                                             vm = playlistsVm,
                                             playerVm = vm,
                                             onBack = { playlistId = null; screen = "playlists" },
-                                            playlistId = playlistId
+                                            playlistId = playlistId,
+                                            onListenTogether = { screen = "listen_together" }
                                         )
                                         "downloads" -> DownloadQueueScreen(
                                             onBack = { screen = "playlists" },
@@ -325,17 +401,74 @@ class MainActivity : ComponentActivity() {
                                             // So the row overflow can reach queue actions. The
                                             // queue's own DownloadViewModel deliberately knows
                                             // nothing about playback.
-                                            playerVm = vm
+                                            playerVm = vm,
+                                            onListenTogether = { screen = "listen_together" }
+                                        )
+                                        "listen_together" -> ListenTogetherScreen(
+                                            client = listenClient,
+                                            syncManager = syncManager,
+                                            onBack = { screen = "home" }
+                                        )
+                                        // Top-bar history button on Home lands here.
+                                        // The generic BackHandler already sends any
+                                        // non-home screen back to Home.
+                                        "history" -> HistoryScreen(
+                                            playerVm = vm,
+                                            onBack = { screen = "home" },
+                                            onPlayDone = { showSheet = true }
                                         )
                                         else        -> SettingsScreen(
                                             onCustomizeTabs = { showTabCustomizer = true },
+                                            // Temporary probe: proves whether the row tap
+                                            // reaches the Activity at all. Remove once
+                                            // the dialog is confirmed on device.
+                                            onSignIn = {
+                                                Toast.makeText(
+                                                    applicationContext,
+                                                    "opening login…",
+                                                    Toast.LENGTH_SHORT
+                                                ).show()
+                                                showLogin = true
+                                            },
+                                            auth = auth,
                                             playlistsVm = playlistsVm
+                                        )
+                                    }
+                                }
+                                // Album / artist / playlist detail, drawn ABOVE the tab
+                                // rather than inside it. Keeping `screen` untouched while a
+                                // detail is open is what makes back return to the tab you came
+                                // from, and it removed the Home flash the tab-switch animation
+                                // used to cause on the way back from a Playlists-opened page.
+                                val dId = detailId
+                                if (dId != null) {
+                                    if (dId.startsWith("UC")) {
+                                        ArtistDetailScreen(
+                                            browseId = dId,
+                                            title = detailTitle,
+                                            vm = vm,
+                                            onBack = { detailId = null },
+                                            onOpenAlbum = { id, t -> detailId = id; detailTitle = t },
+                                            onBrowse = { id, t -> detailId = id; detailTitle = t },
+                                            onListenTogether = { screen = "listen_together" }
+                                        )
+                                    } else {
+                                        AlbumDetailScreen(
+                                            browseId = dId,
+                                            title = detailTitle,
+                                            vm = vm,
+                                            // So the per-track menu's "Add to playlist"
+                                            // has a playlist list to write into.
+                                            playlistsVm = playlistsVm,
+                                            onBack = { detailId = null },
+                                            onBrowse = { id, t -> detailId = id; detailTitle = t },
+                                            onListenTogether = { screen = "listen_together" }
                                         )
                                     }
                                 }
                             }
                             if (vm.currentVideoId.isNotBlank()) {
-                                MiniPlayer(vm = vm, onOpen = { showSheet = true }, onOpenQueue = { showQueue = true })
+                                MiniPlayer(vm = vm, onOpen = { showSheet = true })
                             }
                             AppNavBar(
                                 current = screen,
@@ -348,13 +481,22 @@ class MainActivity : ComponentActivity() {
                                 vm = vm,
                                 onClose = { showSheet = false },
                                 playlistsVm = playlistsVm,
-                                onOpenQueue = { showQueue = true }
+                                onOpenQueue = { showQueue = true },
+                                onListenTogether = { showSheet = false; screen = "listen_together" },
+                                onBrowse = { id, t -> showSheet = false; detailId = id; detailTitle = t }
                             )
                         }
                         // After FullSheetPlayer so it composites on top of it when both
                         // are open (queue launched from the full player).
                         if (showQueue) {
-                            QueueSheet(vm = vm, onDismiss = { showQueue = false })
+                            QueueSheet(vm = vm, onDismiss = { showQueue = false }, onBrowse = { id, t -> showQueue = false; showSheet = false; detailId = id; detailTitle = t }, onListenTogether = { showQueue = false; screen = "listen_together" })
+                        }
+                        // YouTube account sign-in overlay — opens from Settings.
+                        if (showLogin) {
+                            LoginScreen(
+                                auth = auth,
+                                onClose = { showLogin = false }
+                            )
                         }
                     }
                 }

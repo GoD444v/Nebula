@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- Update APKs live in getExternalFilesDir(DIRECTORY_DOWNLOADS)/nebula_updates -->
+    <external-files-path name="nebula_updates" path="." />
+</paths>

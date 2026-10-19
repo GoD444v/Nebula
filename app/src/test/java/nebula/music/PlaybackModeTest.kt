@@ -46,6 +46,62 @@ class PlaybackModeTest {
     }
 
     @Test
+    fun autoplay_wraps_to_top_at_end_of_queue() {
+        val a = PlaybackModes.next(
+            queueSize = 3, queueIndex = 2, upNextSize = 0,
+            repeatMode = PlaybackModes.REPEAT_OFF, shuffleOn = false, autoplayOn = true
+        )
+        assertEquals(NextAction.PlayQueue(0), a)
+    }
+
+    @Test
+    fun autoplay_does_not_wrap_before_the_end() {
+        val a = PlaybackModes.next(
+            queueSize = 3, queueIndex = 0, upNextSize = 0,
+            repeatMode = PlaybackModes.REPEAT_OFF, shuffleOn = false, autoplayOn = true
+        )
+        assertEquals(NextAction.PlayQueue(1), a)
+    }
+
+    @Test
+    fun autoplay_off_still_stops_at_the_end() {
+        val a = PlaybackModes.next(
+            queueSize = 3, queueIndex = 2, upNextSize = 0,
+            repeatMode = PlaybackModes.REPEAT_OFF, shuffleOn = false, autoplayOn = false
+        )
+        assertEquals(NextAction.Stop, a)
+    }
+
+    // A lone song from Home or Search: wrapping would replay that one song forever, so
+    // the queue has to fall through to Stop and let PlayerViewModel start a radio.
+    @Test
+    fun autoplay_does_not_wrap_a_lone_song_queue() {
+        val a = PlaybackModes.next(
+            queueSize = 1, queueIndex = 0, upNextSize = 0,
+            repeatMode = PlaybackModes.REPEAT_OFF, shuffleOn = false, autoplayOn = true
+        )
+        assertEquals(NextAction.Stop, a)
+    }
+
+    @Test
+    fun autoplay_wraps_a_two_song_queue() {
+        val a = PlaybackModes.next(
+            queueSize = 2, queueIndex = 1, upNextSize = 0,
+            repeatMode = PlaybackModes.REPEAT_OFF, shuffleOn = false, autoplayOn = true
+        )
+        assertEquals(NextAction.PlayQueue(0), a)
+    }
+
+    @Test
+    fun autoplay_on_an_empty_queue_stops() {
+        val a = PlaybackModes.next(
+            queueSize = 0, queueIndex = -1, upNextSize = 0,
+            repeatMode = PlaybackModes.REPEAT_OFF, shuffleOn = false, autoplayOn = true
+        )
+        assertEquals(NextAction.Stop, a)
+    }
+
+    @Test
     fun loop_one_replays_current() {
         val a = PlaybackModes.next(
             queueSize = 3, queueIndex = 1, upNextSize = 4,
@@ -73,6 +129,26 @@ class PlaybackModeTest {
         )
         // Single-item queue: random pick would replay itself, so fall to Up Next.
         assertEquals(NextAction.PlayUpNext(0), a)
+    }
+
+    @Test
+    fun append_radio_keeps_everything_and_drops_seen() {
+        val a = PlaybackModes.appendRadio(listOf("a", "b", "c"), listOf("b", "d", "e"))
+        assertEquals(listOf("a", "b", "c", "d", "e"), a)
+    }
+
+    // The radio is seeded by one song, so refetching it returns the same tracks. Returning
+    // null is what stops the top-up from looping forever without ever growing the queue.
+    @Test
+    fun append_radio_returns_null_when_nothing_is_new() {
+        val a = PlaybackModes.appendRadio(listOf("a", "b", "c"), listOf("a", "b"))
+        assertNull(a)
+    }
+
+    @Test
+    fun append_radio_also_drops_duplicates_inside_more() {
+        val a = PlaybackModes.appendRadio(listOf("a"), listOf("d", "d", "e"))
+        assertEquals(listOf("a", "d", "e"), a)
     }
 
     @Test
@@ -233,5 +309,54 @@ class PlaybackModeTest {
     fun history_survives_emptying_the_queue() {
         assertEquals(emptyList<Int>(), PlaybackModes.repairHistory(
             history = listOf(0, 1), queueSizeAfterRemoval = 0, removedIndex = 0))
+    }
+
+    // ---- Scope: shuffle and repeat belong to the queue that is playing ----
+    // Shuffle/repeat used to be one global pair persisted in SharedPreferences, so a
+    // shuffle switched on inside one playlist stayed on for every other playlist and
+    // survived a restart. These pin the replacement rule: entering a DIFFERENT source
+    // clears both; entering the SAME one keeps them, because tapping a second song
+    // inside the playlist you are already playing from must not discard what you just
+    // set.
+
+    @Test
+    fun entering_a_different_scope_clears_shuffle_and_repeat() {
+        val (shuffle, repeat) = PlaybackModes.onEnterScope(
+            currentScope = "playlist:7", newScope = "local", shuffle = true, repeat = REPEAT_ALL_MODE)
+        assertFalse("shuffle leaked into another playlist", shuffle)
+        assertEquals(REPEAT_OFF_MODE, repeat)
+    }
+
+    @Test
+    fun entering_the_same_scope_keeps_both_modes() {
+        val (shuffle, repeat) = PlaybackModes.onEnterScope(
+            currentScope = "playlist:7", newScope = "playlist:7", shuffle = true, repeat = REPEAT_ONE_MODE)
+        assertTrue(shuffle)
+        assertEquals(REPEAT_ONE_MODE, repeat)
+    }
+
+    @Test
+    fun leaving_a_playlist_for_a_plain_tap_clears_both_modes() {
+        // null is "not a set" — a search result, Home, a radio. It must read as off,
+        // or the playlist you just left keeps shaping playback app-wide.
+        val (shuffle, repeat) = PlaybackModes.onEnterScope(
+            currentScope = "playlist:7", newScope = null, shuffle = true, repeat = REPEAT_ALL_MODE)
+        assertFalse(shuffle)
+        assertEquals(REPEAT_OFF_MODE, repeat)
+    }
+
+    @Test
+    fun the_first_play_of_the_session_starts_from_off_regardless_of_scope() {
+        val (shuffle, repeat) = PlaybackModes.onEnterScope(
+            currentScope = null, newScope = "playlist:7", shuffle = false, repeat = REPEAT_OFF_MODE)
+        assertFalse(shuffle)
+        assertEquals(REPEAT_OFF_MODE, repeat)
+    }
+
+    // Media3's constants, spelled out rather than importing Media3 into a JVM test.
+    private companion object {
+        const val REPEAT_OFF_MODE = 0
+        const val REPEAT_ONE_MODE = 1
+        const val REPEAT_ALL_MODE = 2
     }
 }

@@ -13,9 +13,7 @@ import androidx.room.RoomDatabase
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import nebula.music.data.db.NebulaDatabase
-import nebula.music.data.db.dao.LocalSongDao
 import nebula.music.data.db.dao.PlaylistDao
-import nebula.music.data.db.entities.LocalSong
 import nebula.music.data.db.entities.PlaylistEntity
 import nebula.music.data.db.entities.PlaylistSongEntity
 import kotlinx.coroutines.flow.first
@@ -28,15 +26,46 @@ import org.junit.Test
 import org.junit.runner.RunWith
 
 /**
+ * local_songs as it actually shipped in v1 and v2: no `dateModified` (that came
+ * in MIGRATION_3_4) and no `folderPath` (MIGRATION_6_7). Room derives a fixture
+ * schema from the entity classes it is given, so the production [LocalSong] —
+ * which today carries both — would make the ALTER chain fail with "duplicate
+ * column name" the moment it adds a column the seeded file already has. This is
+ * the frozen early shape, the same snapshot discipline the playlist fixtures
+ * below follow for the v2 era.
+ */
+@Entity(tableName = "local_songs")
+data class LocalSongSnapshot(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val title: String,
+    val artist: String,
+    val album: String,
+    val duration: Long,
+    val filePath: String,
+    val thumbnailUri: String
+)
+
+/**
+ * Insert-only: seeding is the snapshot's only job; the production database and
+ * its own DAO do all the reading after migration.
+ */
+@Dao
+interface LocalSongFixtureDao {
+    @Insert
+    suspend fun insertAll(songs: List<LocalSongSnapshot>)
+}
+
+/**
  * v1 of NebulaDatabase as it shipped: one table, `local_songs`, no playlist tables.
  *
  * Declared here rather than checked in as a binary .db asset so the fixture cannot
- * drift from the real [LocalSong] entity. Safe because versionCode is 1, so no v1
- * database exists in the wild — this asserts against the schema the app actually had.
+ * drift from what this app's version 1 schema was. Safe because versionCode is 1,
+ * so no v1 database exists in the wild — this asserts against the schema the app
+ * actually had.
  */
-@Database(entities = [LocalSong::class], version = 1, exportSchema = false)
+@Database(entities = [LocalSongSnapshot::class], version = 1, exportSchema = false)
 abstract class V1FixtureDatabase : RoomDatabase() {
-    abstract fun localSongDao(): LocalSongDao
+    abstract fun localSongFixtureDao(): LocalSongFixtureDao
 }
 
 /**
@@ -91,12 +120,12 @@ interface V2FixtureDao {
 }
 
 @Database(
-    entities = [LocalSong::class, PlaylistV2Entity::class, PlaylistSongV2Entity::class],
+    entities = [LocalSongSnapshot::class, PlaylistV2Entity::class, PlaylistSongV2Entity::class],
     version = 2,
     exportSchema = false
 )
 abstract class V2FixtureDatabase : RoomDatabase() {
-    abstract fun localSongDao(): LocalSongDao
+    abstract fun localSongFixtureDao(): LocalSongFixtureDao
     abstract fun fixtureDao(): V2FixtureDao
 }
 
@@ -128,9 +157,9 @@ class PlaylistMigrationTest {
             .allowMainThreadQueries()
             .build()
         runBlocking {
-            fixture.localSongDao().insertAll(
+            fixture.localSongFixtureDao().insertAll(
                 listOf(
-                    LocalSong(
+                    LocalSongSnapshot(
                         title = "Kept Through Migration",
                         artist = "Artist",
                         album = "Album",

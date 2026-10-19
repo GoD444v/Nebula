@@ -12,20 +12,22 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Lyrics
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -43,8 +45,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import nebula.music.data.models.LyricHighlight
 import nebula.music.data.models.LyricsStyleStore
-import nebula.music.ui.components.ChunkyAction
-import nebula.music.ui.components.ChunkyWindow
+import nebula.music.data.lyrics.LyricsProviderRegistry
 import nebula.music.ui.theme.BorderBlack
 
 private val ModeLabels = listOf(
@@ -84,13 +85,13 @@ private val WordSwatches = listOf(
     0xFF000000.toInt()  // AmoledBlack (brand)
 )
 
+// The visual half of the old combined Lyrics window: highlight mode + word colour.
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun LyricsStyleSection() {
     val context = LocalContext.current
     var mode by remember { mutableStateOf(LyricsStyleStore.getMode(context)) }
     var customColor by remember { mutableStateOf(LyricsStyleStore.getCustomColor(context)) }
-    var open by remember { mutableStateOf(false) }
     val cardShape = RoundedCornerShape(16.dp)
     val rowShape = RoundedCornerShape(12.dp)
     val wordColor = customColor?.let { Color(it) } ?: MaterialTheme.colorScheme.primary
@@ -110,13 +111,10 @@ fun LyricsStyleSection() {
                 .background(MaterialTheme.colorScheme.surface)
                 .border(3.dp, BorderBlack, cardShape)
         ) {
-            // Grit ListItem summary: icon + name + current pick + colour dot. The six
-            // modes used to sit inline here and pushed the rest of Settings off-screen,
-            // so the row just opens the mini window below. Tapping again closes it.
+            // Grit ListItem summary: icon + name + current pick + colour dot.
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable { open = !open }
                     .padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -128,7 +126,7 @@ fun LyricsStyleSection() {
                 )
                 Spacer(modifier = Modifier.width(10.dp))
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("Lyrics", fontWeight = FontWeight.Black, fontSize = 15.sp, color = MaterialTheme.colorScheme.onSurface)
+                    Text("Lyrics style", fontWeight = FontWeight.Black, fontSize = 15.sp, color = MaterialTheme.colorScheme.onSurface)
                     Text(
                         "Highlight style · ${ModeLabels.first { it.first == mode }.second}",
                         fontSize = 11.sp,
@@ -145,14 +143,13 @@ fun LyricsStyleSection() {
                 )
             }
             Box(modifier = Modifier.fillMaxWidth().height(3.dp).background(BorderBlack))
-        }
-    }
-
-    // Sibling of the card Box on purpose: the card's shadow uses matchParentSize, and
-    // a Dialog renders in its own window anyway, so nesting it in the card is noise.
-    if (open) {
-        ChunkyWindow(title = "Lyrics", onDismissRequest = { open = false }) {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            // The modes and the swatch grid used to hide behind a popup window; as
+            // their own sub-screen they show directly on the page. The page scrolls,
+            // so no window cap is needed any more.
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(10.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 ModeLabels.forEach { (value, label) ->
                     val selected = mode == value
                     Row(
@@ -180,16 +177,12 @@ fun LyricsStyleSection() {
                 }
                 Text("Word color", fontWeight = FontWeight.Black, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurface)
                 // 19 chips at 36dp + 10dp gaps overflows any phone width, so this
-                // wraps. ChunkyWindow's own Column is neither scrollable nor
-                // height-capped, so an uncapped grid would just push the Done
-                // button off-screen instead of growing the window: cap the grid
-                // at 3 lines (36*3 + 10*2 = 128dp) and let it scroll past that.
-                // Shorter grids never scroll, so this is invisible on tall screens.
+                // wraps. It deliberately does NOT scroll on its own any more: two
+                // vertical scrolls in one window trap the drag — the grid swallows
+                // the gesture and the window stops moving under the finger. The grid
+                // takes its natural height and the whole group scrolls instead.
                 FlowRow(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = 128.dp)
-                        .verticalScroll(rememberScrollState()),
+                    modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
@@ -241,10 +234,148 @@ fun LyricsStyleSection() {
                     }
                 }
             }
-            // Picking a mode or a colour applies immediately and deliberately keeps the
-            // window open (style + colour are two separate decisions), so Done closes it.
-            Spacer(modifier = Modifier.height(12.dp))
-            ChunkyAction(label = "Done", onClick = { open = false })
+        }
+    }
+}
+
+/**
+ * The functional half of the old combined Lyrics window: romanized reading,
+ * English translation, and the provider priority list.
+ */
+@Composable
+fun LyricsProvidersSection() {
+    val context = LocalContext.current
+    var translation by remember { mutableStateOf(LyricsStyleStore.getTranslation(context)) }
+    var romanize by remember { mutableStateOf(LyricsStyleStore.getRomanize(context)) }
+    var providerOrder by remember { mutableStateOf(LyricsProviderRegistry.orderedAll().map { it.id }) }
+    var providerEnabled by remember {
+        mutableStateOf(LyricsProviderRegistry.all.associate { it.id to LyricsProviderRegistry.isEnabled(it.id) })
+    }
+    val cardShape = RoundedCornerShape(16.dp)
+
+    Box {
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .offset(x = 4.dp, y = 4.dp)
+                .clip(cardShape)
+                .background(MaterialTheme.colorScheme.outline)
+        )
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(cardShape)
+                .background(MaterialTheme.colorScheme.surface)
+                .border(3.dp, BorderBlack, cardShape)
+                .padding(horizontal = 12.dp, vertical = 10.dp)
+        ) {
+            // The two sub-lines that stack above the original share one labelled
+            // group with the provider list below a divider, because they read in the
+            // opposite direction to everything above them — and they are listed in
+            // the order they are drawn: reading, then English, then the line itself.
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Romanized reading", fontWeight = FontWeight.Black, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurface)
+                    // Names the language and where the change lands. A Japanese song
+                    // has no reading to show, so without saying "Korean" the empty
+                    // result would look like a switch that does nothing.
+                    Text("Korean songs only · from the next song", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface)
+                }
+                Spacer(modifier = Modifier.width(10.dp))
+                Switch(
+                    checked = romanize,
+                    onCheckedChange = { on ->
+                        LyricsStyleStore.setRomanize(context, on)
+                        romanize = on
+                    },
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = MaterialTheme.colorScheme.primary,
+                        checkedTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
+                        uncheckedThumbColor = MaterialTheme.colorScheme.onSurface,
+                        uncheckedTrackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
+                    )
+                )
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("English translation", fontWeight = FontWeight.Black, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurface)
+                    // Says where it lands, because the switch cannot take effect on a
+                    // song that has already been translated.
+                    Text("Above the original · from the next song", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface)
+                }
+                Spacer(modifier = Modifier.width(10.dp))
+                Switch(
+                    checked = translation,
+                    onCheckedChange = { on ->
+                        LyricsStyleStore.setTranslation(context, on)
+                        translation = on
+                    },
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = MaterialTheme.colorScheme.primary,
+                        checkedTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
+                        uncheckedThumbColor = MaterialTheme.colorScheme.onSurface,
+                        uncheckedTrackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
+                    )
+                )
+            }
+            // Providers — which lyric sources run, and in what priority order.
+            // Order only breaks ties inside a quality tier; an off switch takes
+            // a provider out of the race entirely.
+            Box(modifier = Modifier.fillMaxWidth().height(3.dp).background(BorderBlack))
+            Text("Providers", fontWeight = FontWeight.Black, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurface)
+            providerOrder.forEachIndexed { index, id ->
+                val info = LyricsProviderRegistry.all.first { it.id == id }
+                val enabled = providerEnabled[id] ?: info.enabledByDefault
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        info.label,
+                        modifier = Modifier.weight(1f),
+                        fontWeight = FontWeight.Black,
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    IconButton(
+                        onClick = {
+                            if (index > 0) {
+                                val next = providerOrder.toMutableList().apply { add(index - 1, removeAt(index)) }
+                                providerOrder = next
+                                LyricsProviderRegistry.setOrder(next)
+                            }
+                        },
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Icon(Icons.Filled.KeyboardArrowUp, contentDescription = "Move up", modifier = Modifier.size(18.dp))
+                    }
+                    IconButton(
+                        onClick = {
+                            if (index < providerOrder.size - 1) {
+                                val next = providerOrder.toMutableList().apply { add(index + 1, removeAt(index)) }
+                                providerOrder = next
+                                LyricsProviderRegistry.setOrder(next)
+                            }
+                        },
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Icon(Icons.Filled.KeyboardArrowDown, contentDescription = "Move down", modifier = Modifier.size(18.dp))
+                    }
+                    Switch(
+                        checked = enabled,
+                        onCheckedChange = { on ->
+                            LyricsProviderRegistry.setEnabled(id, on)
+                            providerEnabled = providerEnabled.toMutableMap().apply { put(id, on) }
+                        },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = MaterialTheme.colorScheme.primary,
+                            checkedTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
+                            uncheckedThumbColor = MaterialTheme.colorScheme.onSurface,
+                            uncheckedTrackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
+                        )
+                    )
+                }
+            }
         }
     }
 }

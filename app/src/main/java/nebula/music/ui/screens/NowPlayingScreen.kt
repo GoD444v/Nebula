@@ -59,7 +59,11 @@ fun NowPlayingScreen(vm: PlayerViewModel = viewModel()) {
         Spacer(modifier = Modifier.weight(1f))
 
         Box(contentAlignment = Alignment.Center) {
-            ArtBox(title = vm.currentSongTitle, videoId = vm.currentVideoId)
+            ArtBox(
+            title = vm.currentSongTitle,
+            videoId = vm.currentVideoId,
+            thumbnailUrl = vm.currentSong()?.thumbnailUrl
+        )
         }
 
         Spacer(modifier = Modifier.height(20.dp))
@@ -93,7 +97,7 @@ fun NowPlayingScreen(vm: PlayerViewModel = viewModel()) {
             }
         }
 
-        if (vm.isLoading) {
+        if (vm.isLoading || vm.isBuffering) {
             Spacer(modifier = Modifier.height(12.dp))
             Box(
                 modifier = Modifier
@@ -207,9 +211,11 @@ tint = MaterialTheme.colorScheme.onSurface
     }
 }
 
-// ponytail: maxres photo with letter fallback; error slot covers videos lacking hi-res
+// ponytail: maxres photo with letter fallback; error slot covers videos lacking hi-res.
+// thumbnailUrl (the queue entry's own art — the local song's MediaStore uri) wins first,
+// same policy MiniPlayer uses; the ytimg URL is the YouTube-only fallback.
 @Composable
-private fun ArtBox(title: String, videoId: String) {
+private fun ArtBox(title: String, videoId: String, thumbnailUrl: String? = null) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -223,7 +229,8 @@ private fun ArtBox(title: String, videoId: String) {
             LetterArt(title)
         } else {
             SubcomposeAsyncImage(
-                model = "https://i.ytimg.com/vi/$videoId/maxresdefault.jpg",
+                model = thumbnailUrl?.takeIf { it.isNotBlank() }
+                    ?: "https://i.ytimg.com/vi/$videoId/maxresdefault.jpg",
                 contentDescription = title,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize(),

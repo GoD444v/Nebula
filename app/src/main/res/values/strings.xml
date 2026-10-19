@@ -1,6 +1,21 @@
 <resources>
     <string name="app_name">Nebula</string>
-    <string name="nebula_remove_all_downloads">Remove all</string>
+    <string name="nebula_cancel_downloads">Cancel</string>
+    <!-- Update downloader notifications - updater/downloadmanager/DownloadNotificationManager.kt -->
+    <string name="download_progress_channel">Update downloads</string>
+    <string name="download_progress_description">Progress of app update downloads</string>
+    <string name="downloading_update">Downloading update</string>
+    <string name="starting">Starting</string>
+    <string name="done">Done</string>
+    <string name="update_ready">Update ready</string>
+    <string name="update_failed">Update failed</string>
+    <string name="version_file_size">%1$s - %2$s</string>
+    <string name="version_progress">%1$s - %2$d%%</string>
+    <string name="tap_to_install_version">Tap to install %1$s</string>
+    <string name="failed_to_download_version">Failed to download %1$s</string>
+    <string name="failed_to_download_version_error">Failed to download %1$s: %2$s</string>
+    <string name="server_error">Server returned HTTP %1$d</string>
+    <string name="download_failed">Download failed</string>
     <!-- DownloadService.onCreate passes this to NotificationUtil.createNotificationChannel,
          which calls getString() on it. Media3's own placeholder value is 0, and
          getString(0) throws Resources.NotFoundException, crashing the service on start. -->

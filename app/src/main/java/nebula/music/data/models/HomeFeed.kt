@@ -33,5 +33,6 @@ data class HomeChip(
 
 data class HomeFeed(
     val chips: List<HomeChip>,
-    val sections: List<HomeSection>
+    val sections: List<HomeSection>,
+    val continuation: String? = null
 )

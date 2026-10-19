@@ -1,7 +1,10 @@
 ﻿package nebula.music.viewmodel
 
+import androidx.compose.runtime.snapshotFlow
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import nebula.music.data.BlockedSongs
+import nebula.music.data.SearchHistory
 import nebula.music.data.SearchRepository
 import nebula.music.data.models.SearchResult
 import kotlinx.coroutines.CancellationException
@@ -45,6 +48,16 @@ class SearchViewModel(
     private var lastKey: String? = null
 
     init {
+        // Drop a song from whatever is on screen the instant it is blocked — filtering
+        // only at fetch time would leave the row visible until the next search. Unblock
+        // does not resurrect rows here; the next search brings them back.
+        viewModelScope.launch {
+            snapshotFlow { BlockedSongs.songs }.collect {
+                val current = _searchResults.value
+                val filtered = BlockedSongs.filter(current)
+                if (filtered != current) _searchResults.value = filtered
+            }
+        }
         // Fast search with 300ms debounce
         viewModelScope.launch {
             _searchQuery
@@ -84,6 +97,9 @@ class SearchViewModel(
     fun performSearch() {
         val query = _searchQuery.value.trim()
         if (query.isNotEmpty()) {
+            // Committed search (IME search key or the button) — keystroke-level
+            // typing stays out of history, matching the reference's onSearch save.
+            SearchHistory.add(query)
             performSearchInternal(query, _filter.value)
         }
     }
@@ -106,7 +122,7 @@ class SearchViewModel(
                     targetCount = 50,
                     maxPages = 3
                 )
-                _searchResults.value = result.items.distinctBy { it.videoId }
+                _searchResults.value = BlockedSongs.filter(result.items.distinctBy { it.videoId })
                 _continuationToken.value = result.continuationToken
             } catch (e: CancellationException) {
                 throw e
@@ -134,7 +150,7 @@ class SearchViewModel(
                 val nextResult = repository.searchContinuation(token)
                 val currentList = _searchResults.value
                 val combined = (currentList + nextResult.items).distinctBy { it.videoId }
-                _searchResults.value = combined.take(60)
+                _searchResults.value = BlockedSongs.filter(combined).take(60)
                 _continuationToken.value = if (combined.size < 60) nextResult.continuationToken else null
             } catch (e: CancellationException) {
                 throw e

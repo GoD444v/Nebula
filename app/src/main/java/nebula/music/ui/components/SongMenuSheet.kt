@@ -19,6 +19,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Album
+import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
@@ -26,6 +27,7 @@ import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PlaylistAdd
+import androidx.compose.material.icons.filled.PlaylistRemove
 import androidx.compose.material.icons.filled.PlaylistPlay
 import androidx.compose.material.icons.filled.QueueMusic
 import androidx.compose.material.icons.filled.Radio
@@ -45,6 +47,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
+import nebula.music.data.BlockedSongs
 import nebula.music.data.models.SearchResult
 import nebula.music.ui.theme.BorderBlack
 import nebula.music.ui.theme.MintTeal
@@ -84,10 +87,16 @@ fun SongMenuSheet(
     onViewAlbum: () -> Unit = {},
     onRefetch: () -> Unit = {},
     onShowInfo: () -> Unit = {},
+    onListenTogether: () -> Unit = {},
+    allowNavigation: Boolean = true,
     // Null = this menu has no queue context, so no row is composed. A defaulted no-op
     // lambda would still draw a clickable row that silently does nothing — which is the
     // exact failure the file header says is worse than a missing item.
-    onRemoveFromQueue: (() -> Unit)? = null
+    onRemoveFromQueue: (() -> Unit)? = null,
+    // Null = this song is not in a playlist the user is looking at, so there is nothing
+    // to take it out of. Same rule as the queue row above: a defaulted no-op would draw
+    // a row that does nothing.
+    onRemoveFromPlaylist: (() -> Unit)? = null
 ) {
     ChunkyWindow(
         title = song.title.ifBlank { "Song options" },
@@ -105,6 +114,7 @@ fun SongMenuSheet(
             MenuItem("Start radio", Icons.Filled.Radio, onStartRadio)
             MenuItem("Add to playlist", Icons.Filled.PlaylistAdd, onAddToPlaylist)
             MenuItem("Share", Icons.Filled.Share, onShare)
+            MenuItem("Listen Together", Icons.Filled.Person, onListenTogether)
 
             HorizontalDivider(
                 modifier = Modifier.padding(vertical = 6.dp),
@@ -120,6 +130,16 @@ fun SongMenuSheet(
                     "Remove from queue",
                     Icons.Filled.Close,
                     onRemoveFromQueue,
+                    destructive = true
+                )
+            }
+            // Taking a song OUT of the playlist you are looking at. Only offered when the
+            // song really is in one of the user's own playlists.
+            if (onRemoveFromPlaylist != null) {
+                MenuItem(
+                    "Remove from this playlist",
+                    Icons.Filled.Delete,
+                    onRemoveFromPlaylist,
                     destructive = true
                 )
             }
@@ -142,10 +162,29 @@ fun SongMenuSheet(
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.15f)
             )
 
-            MenuItem("View artist", Icons.Filled.Person, onViewArtist)
-            MenuItem("View album", Icons.Filled.Album, onViewAlbum)
+            if (allowNavigation && song.artist.isNotBlank()) MenuItem("View artist", Icons.Filled.Person, onViewArtist)
+            if (allowNavigation && song.title.isNotBlank()) MenuItem("View album", Icons.Filled.Album, onViewAlbum)
             MenuItem("Song info", Icons.Filled.Info, onShowInfo)
-            MenuItem("Refetch", Icons.Filled.Refresh, onRefetch)
+            if (song.videoId.isNotBlank()) MenuItem("Refetch", Icons.Filled.Refresh, onRefetch)
+            // Block flips to Unblock in place, the way the download row flips — the
+            // song is filtered out of the lists this menu lives on the moment it is
+            // blocked, so a flip (not a disappearing row) is what keeps the undo
+            // reachable from here.
+            if (song.videoId.isNotBlank()) {
+                val blocked = BlockedSongs.isBlocked(song.videoId)
+                MenuItem(
+                    if (blocked) "Unblock song" else "Block song",
+                    Icons.Filled.Block,
+                    onClick = {
+                        if (blocked) {
+                            BlockedSongs.unblock(song.videoId)
+                        } else {
+                            BlockedSongs.block(song.videoId, song.title, song.artist)
+                        }
+                    },
+                    destructive = !blocked
+                )
+            }
         }
     }
 }

@@ -49,9 +49,17 @@ render.experimental.xml
 *.jks
 *.keystore
 
+# Release signing credentials (passwords - never commit)
+keystore.properties
+signing.properties
+
 # Google Services (e.g. APIs or Firebase)
 google-services.json
 
 # Android Profiling
 *.hprof
  27110a5a8f6df538d8e5f6c8e2fa5b4c44fa1d79
+
+# graphify generated output
+graphify-out/
+

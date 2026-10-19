@@ -19,10 +19,24 @@ import kotlinx.serialization.json.longOrNull
 
 /** KPoE/LyricsPlus community mirrors: first mirror with usable lyrics wins. */
 object KpoeLyrics {
+    // Ordered by MEASURED hit rate, and both are needed. On a 10-song sample
+    // (J-pop, K-pop, Western) prjktla answered for 6 and binimum for 4, but the
+    // coverage does not overlap: アイドル exists only on binimum, 紅蓮華 only on
+    // prjktla. Neither may replace the other.
+    //
+    // First-hit-wins is deliberate, not laziness. "Best" hit would mean counting
+    // lines, and binimum's longer answer for Lemon was a DIFFERENT TRACK — a
+    // Chinese cover ("Lemon·柠檬气息 (合唱版)"), 98 lines of credits and all,
+    // against the real one's 55 word-timed lines. Ranking mirrors by size would
+    // hand back the wrong song.
+    //
+    // lyricsplus.prjktla.workers.dev was removed: it answered a Cloudflare HTML
+    // 404 on every path including "/", so it was a deployment that no longer
+    // exists rather than a mirror having a slow day. Re-adding it is one line if
+    // it ever comes back.
     private val MIRRORS = listOf(
         "https://lyricsplus.prjktla.my.id",
-        "https://lyricsplus.binimum.org",
-        "https://lyricsplus.prjktla.workers.dev"
+        "https://lyricsplus.binimum.org"
     )
     private val json = Json { ignoreUnknownKeys = true }
 
