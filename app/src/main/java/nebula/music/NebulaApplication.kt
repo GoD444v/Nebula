@@ -8,6 +8,8 @@ import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor
 import androidx.media3.datasource.cache.NoOpCacheEvictor
 import androidx.media3.datasource.cache.SimpleCache
+import nebula.music.data.BlockedSongs
+import nebula.music.player.NebulaEqualizer
 import nebula.music.data.download.NebulaDownloads
 import java.io.File
 
@@ -138,5 +140,11 @@ class NebulaApplication : Application() {
         // Initialize downloads at app startup so the download button in the player
         // sheet works even if the user never opened the Downloads tab
         NebulaDownloads.init(this)
+        // Before any composable reads BlockedSongs.filter — the block list must be
+        // loaded from DataStore before the first Search/Home render, not after.
+        BlockedSongs.init(this)
+        // Before PlaybackService can attach the Equalizer: the saved on/off, preset
+        // and band levels must be read before the audio session id arrives.
+        NebulaEqualizer.init(this)
     }
 }

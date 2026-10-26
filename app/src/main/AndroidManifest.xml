@@ -85,6 +85,14 @@
             android:name=".player.NebulaDownloadService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+        <!-- The app updater's WorkManager worker runs foregrounded for long
+             downloads. WorkManager owns this service, so its dataSync type has
+             to be merged in here or lint blocks the release build. -->
+        <service
+            android:name="androidx.work.impl.foreground.SystemForegroundService"
+            android:foregroundServiceType="dataSync"
+            android:exported="false"
+            tools:node="merge" />
     </application>
 
 </manifest>

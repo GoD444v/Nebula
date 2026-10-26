@@ -142,4 +142,11 @@ object OnboardingStore {
             }
         }
     }
+
+    /** Genres off; onboarding stays done. Called on sign-in and sign-out. */
+    suspend fun clearGenres(context: Context) {
+        selectedGenres = emptyList()
+        selectedGenreEndpoints = emptyList()
+        dataStore?.edit { prefs -> prefs.remove(stringPreferencesKey("selected_genres")) }
+    }
 }

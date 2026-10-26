@@ -3,7 +3,10 @@
 import android.util.Log
 import nebula.music.data.lyrics.KpoeLyrics
 import nebula.music.data.lyrics.KugouLyrics
+import nebula.music.data.lyrics.LyricsProviderRegistry
 import nebula.music.data.lyrics.UnisonLyrics
+import nebula.music.data.lyrics.WordTiming
+import nebula.music.data.lyrics.YouTubeMusicLyrics
 import nebula.music.data.models.LyricLine
 import nebula.music.data.models.LyricsResponse
 import io.ktor.client.HttpClient
@@ -20,6 +23,7 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
@@ -94,29 +98,37 @@ class LyricsRepository {
      * Providers never throw except on cancellation, so no per-provider
      * try/catch here.
      */
-    suspend fun getSyncedLyrics(title: String, artist: String, durationMs: Long): LyricsResponse? {
+    suspend fun getSyncedLyrics(
+        title: String,
+        artist: String,
+        durationMs: Long,
+        videoId: String = ""
+    ): LyricsResponse? {
         // Cache first, and never for the blank-title case below it — a cached miss must
         // not short-circuit into returning null without trying the network once.
         cached(title, artist)?.let { return it }
-        return fetchFromProviders(title, artist, durationMs)
+        return fetchFromProviders(title, artist, durationMs, videoId)
     }
 
     private suspend fun fetchFromProviders(
         title: String,
         artist: String,
-        durationMs: Long
+        durationMs: Long,
+        videoId: String = ""
     ): LyricsResponse? =
         withContext(Dispatchers.IO) {
             if (title.isBlank()) return@withContext null
+            // The registry owns which providers run and in what
+            // order; the order only breaks ties inside a tier.
+            val providers = LyricsProviderRegistry.orderedEnabled()
             val results = coroutineScope {
-                listOf(
-                    async { UnisonLyrics.fetch(title, artist, durationMs) },
-                    async { KpoeLyrics.fetch(title, artist, durationMs) },
-                    async { KugouLyrics.fetch(title, artist, durationMs) },
-                    async { fetchLrclib(title, artist, durationMs) }
-                ).awaitAll()
+                providers.map { provider ->
+                    async {
+                        fetchOne(provider.id, title, artist, durationMs, videoId)
+                    }
+                }.awaitAll()
             }
-            val names = listOf("unison", "kpoe", "kugou", "lrclib")
+            val names = providers.map { it.id }
             // A "synced" result whose lines all sit at 0ms has no timing info —
             // offering it as synced makes every tap seek(0) = restart. Demote.
             val sane = results.map { r ->
@@ -153,10 +165,42 @@ class LyricsRepository {
             null
         }
 
-    /** Stores a winner so the next play of this song needs no network. */
+    /**
+     * One provider's fetch, by registry id. Null = no result. The
+     * YouTube Music provider returns raw LRC text (Echo's provider
+     * contract); this repository owns parsing, so it turns the
+     * text into lines here.
+     */
+    private suspend fun fetchOne(
+        id: String,
+        title: String,
+        artist: String,
+        durationMs: Long,
+        videoId: String
+    ): LyricsResponse? = when (id) {
+        "youtubemusic" -> YouTubeMusicLyrics.fetch(videoId)?.let { raw ->
+            parseLrc(raw)?.let { LyricsResponse(it) } ?: LyricsResponse(emptyList(), raw)
+        }
+        "unison" -> UnisonLyrics.fetch(title, artist, durationMs)
+        "kpoe" -> KpoeLyrics.fetch(title, artist, durationMs)
+        "kugou" -> KugouLyrics.fetch(title, artist, durationMs)
+        "lrclib" -> fetchLrclib(title, artist, durationMs)
+        else -> null
+    }
+
+    /**
+     * Stores a winner so the next play of this song needs no network. A wordless
+     * line-level winner gets approximate word timings on the way out — the only
+     * way the animated styles can work on songs no provider had word timings for.
+     *
+     * This must stay AFTER the tier ranking above: [LyricsResponse.hasWordTimings]
+     * is what that ranking sorts on, so filling before it would make every synced
+     * candidate look word-timed and hand the win to provider order instead.
+     */
     private fun pick(title: String, artist: String, lyrics: LyricsResponse): LyricsResponse {
-        remember(title, artist, lyrics)
-        return lyrics
+        val filled = WordTiming.fill(lyrics)
+        remember(title, artist, filled)
+        return filled
     }
 
     /**
@@ -223,7 +267,11 @@ class LyricsRepository {
             if (artistName != null) parameter("artist_name", artistName)
             if (query != null) parameter("q", query)
         }.bodyAsText()
-        Json.parseToJsonElement(text).jsonArray.mapNotNull { el ->
+        // as? JsonArray, not .jsonArray: LRCLIB answers rate-limits and
+        // bad requests with a single error OBJECT, and .jsonArray throws
+        // on that shape. The strategy chain below recovers either way,
+        // but only after a wasted request and a stack trace.
+        (Json.parseToJsonElement(text) as? JsonArray)?.mapNotNull { el ->
             val o = el as? JsonObject ?: return@mapNotNull null
             val synced = o["syncedLyrics"]?.jsonPrimitive?.contentOrNull
             val plain = o["plainLyrics"]?.jsonPrimitive?.contentOrNull
@@ -235,7 +283,7 @@ class LyricsRepository {
                 syncedLyrics = synced,
                 plainLyrics = plain
             )
-        }
+        } ?: emptyList()
     } catch (e: Exception) {
         diag("search(t=$trackName a=$artistName q=$query) failed: ${e::class.simpleName} ${e.message}")
         emptyList()

@@ -37,6 +37,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
@@ -70,6 +72,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil3.compose.SubcomposeAsyncImage
+import nebula.music.data.SearchHistory
 import nebula.music.data.SearchRepository
 import nebula.music.ui.theme.AmoledBlack
 import nebula.music.ui.theme.BorderBlack
@@ -98,7 +101,8 @@ fun SearchScreen(
     vm: PlayerViewModel = viewModel(),
     searchVm: SearchViewModel = viewModel(),
     onPlayDone: () -> Unit = {},
-    playlistsVm: PlaylistsViewModel? = null
+    playlistsVm: PlaylistsViewModel? = null,
+    onListenTogether: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -140,17 +144,29 @@ fun SearchScreen(
         searchVm.performSearch()
     }
 
-    // Playlist/album tap lands here, not on another tab — back returns to results.
+    // Playlist/album/artist tap lands here, not on another tab - back returns to results.
     val browse = browseFor
     if (browse != null) {
         BackHandler { browseFor = null }
-        AlbumDetailScreen(
-            browseId = browse.first,
-            title = browse.second,
-            vm = vm,
-            playlistsVm = playlistsVm,
-            onBack = { browseFor = null }
-        )
+        if (browse.first.startsWith("UC")) {
+            ArtistDetailScreen(
+                browseId = browse.first,
+                title = browse.second,
+                vm = vm,
+                onBack = { browseFor = null },
+                onOpenAlbum = { id, t -> browseFor = id to t },
+                onBrowse = { id, t -> browseFor = id to t }
+            )
+        } else {
+            AlbumDetailScreen(
+                browseId = browse.first,
+                title = browse.second,
+                vm = vm,
+                playlistsVm = playlistsVm,
+                onBack = { browseFor = null },
+                onBrowse = { id, t -> browseFor = id to t }
+            )
+        }
         return
     }
 
@@ -295,11 +311,26 @@ Box(
             ) {
                 Text(errorMessage ?: "", color = MaterialTheme.colorScheme.onBackground, fontWeight = FontWeight.Bold)
             }
-            searchResults.isEmpty() -> Box(
-                modifier = Modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center
-            ) {
-                Text("Type a query above to start discovering music", color = MaterialTheme.colorScheme.onBackground)
+            searchResults.isEmpty() -> if (searchQuery.isBlank() && SearchHistory.queries.isNotEmpty()) {
+                // Recent searches live inline on the empty search surface, Echo's
+                // pattern — there is no separate history screen for queries.
+                RecentSearches(
+                    queries = SearchHistory.queries,
+                    onPick = { q ->
+                        keyboard?.hide()
+                        searchVm.onQueryChange(q)
+                        searchVm.performSearch()
+                    },
+                    onRemove = { SearchHistory.remove(it) },
+                    onClearAll = { SearchHistory.clear() }
+                )
+            } else {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("Type a query above to start discovering music", color = MaterialTheme.colorScheme.onBackground)
+                }
             }
             else -> LazyColumn(
                 state = listState,
@@ -389,12 +420,47 @@ Box(
                     NebulaDownloads.remove(song.videoId)
                     menuFor = null
                 },
-                // Artist and album browsing need a per-song browseId, which a search
-                // result does not carry. Omitted rather than wired to something that
-                // navigates nowhere.
                 onShowInfo = {
                     menuFor = null
                     showingInfoFor = song
+                },
+                onListenTogether = {
+                    menuFor = null
+                    onListenTogether()
+                },
+                onViewArtist = {
+                    menuFor = null
+                    val bid = song.artistBrowseId
+                    if (bid.isNotBlank()) {
+                        browseFor = bid to song.artist
+                    } else {
+                        scope.launch {
+                            val found = SearchRepository().search(song.artist, SearchRepository.SearchFilter.ARTISTS)
+                                .items.firstOrNull { it.browseId.isNotBlank() && it.title.equals(song.artist, ignoreCase = true) }
+                                ?: SearchRepository().search(song.artist, SearchRepository.SearchFilter.ARTISTS)
+                                    .items.firstOrNull { it.browseId.isNotBlank() }
+                            if (found != null) browseFor = found.browseId to found.title.ifBlank { song.artist }
+                        }
+                    }
+                },
+                onViewAlbum = {
+                    menuFor = null
+                    val bid = song.albumBrowseId
+                    if (bid.isNotBlank()) {
+                        browseFor = bid to song.title
+                    } else {
+                        scope.launch {
+                            val found = SearchRepository().search(song.title, SearchRepository.SearchFilter.ALBUMS)
+                                .items.firstOrNull { it.browseId.isNotBlank() }
+                            if (found != null) browseFor = found.browseId to found.title.ifBlank { song.title }
+                        }
+                    }
+                },
+                onRefetch = {
+                    menuFor = null
+                    nebula.music.data.SearchRepository.invalidateStream(song.videoId)
+                    if (song.videoId == vm.currentVideoId) vm.retryPlayback()
+                    android.widget.Toast.makeText(context, "Refetched", android.widget.Toast.LENGTH_SHORT).show()
                 }
             )
         }
@@ -428,6 +494,7 @@ Box(
                 title = song.title,
                 artist = song.artist,
                 artworkUrl = song.thumbnailUrl,
+                videoId = song.videoId,
                 onDismiss = { showingInfoFor = null }
             )
         }
@@ -450,6 +517,75 @@ internal fun toastResult(context: Context, result: AddToPlaylistResult) {
         else -> "Added ${result.added}, ${result.duplicates} already there"
     }
     Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+}
+
+@Composable
+private fun RecentSearches(
+    queries: List<String>,
+    onPick: (String) -> Unit,
+    onRemove: (String) -> Unit,
+    onClearAll: () -> Unit
+) {
+    LazyColumn(
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+        modifier = Modifier.fillMaxSize()
+    ) {
+        item {
+            SectionBanner(title = "Recent searches", isFirst = true)
+        }
+        items(queries, key = { it }) { query ->
+            Box {
+                // 3D shadow layer, same as every other card in the app.
+                Box(
+                    modifier = Modifier
+                        .offset(x = 3.dp, y = 3.dp)
+                        .fillMaxWidth()
+                        .height(54.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(MaterialTheme.colorScheme.outline)
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(54.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(MaterialTheme.colorScheme.surface)
+                        .border(3.dp, BorderBlack, RoundedCornerShape(14.dp))
+                        .clickable { onPick(query) }
+                        .padding(horizontal = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        Icons.Filled.History,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurface
+                    )
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Text(
+                        query,
+                        modifier = Modifier.weight(1f),
+                        fontWeight = FontWeight.Black,
+                        fontSize = 14.sp,
+                        maxLines = 1,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    // Its own tap target, so forgetting a query never starts it.
+                    IconButton(onClick = { onRemove(query) }) {
+                        Icon(
+                            Icons.Filled.Close,
+                            contentDescription = "Remove $query from recent searches",
+                            tint = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                }
+            }
+        }
+        item {
+            Box(modifier = Modifier.padding(top = 8.dp)) {
+                FilterChip(label = "Clear all", selected = false, onClick = onClearAll)
+            }
+        }
+    }
 }
 
 @Composable

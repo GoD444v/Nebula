@@ -21,6 +21,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -82,8 +83,12 @@ fun MiniPlayer(vm: PlayerViewModel, onOpen: () -> Unit) {
                 contentAlignment = Alignment.Center
             ) {
                 if (vm.currentVideoId.isNotBlank()) {
+                    // Queue artwork first: a local song's videoId is "local:content://…",
+                    // so the i.ytimg URL below would 404 for every song off the device.
+                    val artModel = vm.currentSong()?.thumbnailUrl?.takeIf { it.isNotBlank() }
+                        ?: "https://i.ytimg.com/vi/${vm.currentVideoId}/mqdefault.jpg"
                     SubcomposeAsyncImage(
-                        model = "https://i.ytimg.com/vi/${vm.currentVideoId}/mqdefault.jpg",
+                        model = artModel,
                         contentDescription = vm.currentSongTitle,
                         contentScale = ContentScale.Crop,
                         modifier = Modifier.fillMaxSize(),
@@ -104,6 +109,9 @@ fun MiniPlayer(vm: PlayerViewModel, onOpen: () -> Unit) {
                     color = onSurface,
                     modifier = Modifier.basicMarquee()
                 )
+            }
+            IconButton(onClick = { vm.previous() }, modifier = Modifier.size(40.dp)) {
+                Icon(Icons.Filled.SkipPrevious, contentDescription = "Previous", tint = onSurface, modifier = Modifier.size(22.dp))
             }
             // Chunky play/pause in the app's own idiom (3px border + 4dp extrusion).
             // Filled with `secondary` (the palette's cyan/teal), NOT `primary`:

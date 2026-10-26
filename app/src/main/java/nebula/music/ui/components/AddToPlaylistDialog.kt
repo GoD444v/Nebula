@@ -28,18 +28,26 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.launch
+import nebula.music.data.SearchRepository
+import nebula.music.data.auth.AccountLibrary
+import nebula.music.data.auth.YtCookieStore
 import nebula.music.data.db.dao.PlaylistWithCount
 import nebula.music.data.models.SearchResult
+import nebula.music.data.YtPlaylistRow
 import nebula.music.ui.theme.BorderBlack
 import nebula.music.ui.theme.NeonPink
 import nebula.music.ui.theme.SunnyYellow
@@ -67,8 +75,17 @@ fun AddToPlaylistDialog(
     onDismiss: () -> Unit
 ) {
     if (songs.isEmpty()) return
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     var query by remember { mutableStateOf("") }
     var creating by remember { mutableStateOf(false) }
+
+    // Warm the account's YouTube playlists so the section below is not empty
+    // the first time the dialog opens.
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        if (AccountLibrary.playlists.value == null) AccountLibrary.load()
+    }
+    val ytPlaylists by AccountLibrary.playlists.collectAsState()
 
     // Case-insensitive substring match on the name only. A user looking for a playlist is
     // typing words they remember, not matching metadata.
@@ -121,6 +138,48 @@ fun AddToPlaylistDialog(
                             PlaylistPickRow(
                                 entry = entry,
                                 onClick = { onAddToExisting(entry.playlist.id) }
+                            )
+                        }
+                    }
+                }
+
+                // The signed-in account's YouTube playlists. Adding here writes to the
+                // real YouTube library, so the call is fire-and-forget with a toast.
+                val yt = ytPlaylists?.filter { !it.title.contains("liked", ignoreCase = true) }
+                if (YtCookieStore.hasSapisid() && !yt.isNullOrEmpty()) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        "YOUR YOUTUBE PLAYLISTS",
+                        fontWeight = FontWeight.Black,
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.padding(bottom = 4.dp)
+                    )
+                    LazyColumn(modifier = Modifier.heightIn(max = 200.dp)) {
+                        items(yt, key = { it.browseId }) { entry ->
+                            PlaylistPickRow(
+                                entry = PlaylistWithCount(
+                                    playlist = nebula.music.data.db.entities.PlaylistEntity(
+                                        id = 0L, name = entry.title, isSystem = false,
+                                        thumbnailUrl = entry.thumbnailUrl.takeIf { it.isNotBlank() }
+                                    ),
+                                    songCount = entry.subtitle.filter { it.isDigit() }.toIntOrNull() ?: 0,
+                                    coverThumbnailUrl = entry.thumbnailUrl.takeIf { it.isNotBlank() }
+                                ),
+                                onClick = {
+                                    scope.launch {
+                                        var ok = true
+                                        for (s in songs) {
+                                            if (!SearchRepository().addSongToYtPlaylist(entry.browseId, s.videoId)) ok = false
+                                        }
+                                        android.widget.Toast.makeText(
+                                            context,
+                                            if (ok) "Added to ${entry.title}" else "YouTube refused to add",
+                                            android.widget.Toast.LENGTH_SHORT
+                                        ).show()
+                                        if (ok) onDismiss()
+                                    }
+                                }
                             )
                         }
                     }

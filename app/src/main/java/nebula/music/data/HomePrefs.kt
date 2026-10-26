@@ -26,6 +26,12 @@ private val Context.homeDataStore: DataStore<Preferences> by preferencesDataStor
 object HomePrefs {
     var showYourPlaylists by mutableStateOf(true)
         private set
+    /** Echo-style horizontal carousel layout for Home sections (default: vertical feed). */
+    var horizontalScrollLayout by mutableStateOf(false)
+        private set
+    /** Show the Equalizer button in the now-playing sheet header. */
+    var equalizerEnabled by mutableStateOf(true)
+        private set
     /**
      * Explicit per-playlist overrides. Absent = default, and the default is
      * visibility EXCEPT the built-in Downloaded mirror — system rows stay off
@@ -45,6 +51,8 @@ object HomePrefs {
         runBlocking {
             val prefs = dataStore!!.data.first()
             showYourPlaylists = prefs[booleanPreferencesKey("show_your_playlists")] ?: true
+            horizontalScrollLayout = prefs[booleanPreferencesKey("horizontal_scroll_layout")] ?: false
+            equalizerEnabled = prefs[booleanPreferencesKey("equalizer_enabled")] ?: true
             val raw = prefs[stringPreferencesKey("playlist_visibility")] ?: ""
             visibilityOverrides = if (raw.isEmpty()) emptyMap()
             else raw.split(",").mapNotNull { entry ->
@@ -59,6 +67,24 @@ object HomePrefs {
         scope.launch {
             dataStore?.edit { prefs ->
                 prefs[booleanPreferencesKey("show_your_playlists")] = show
+            }
+        }
+    }
+
+    fun setHorizontalScrollLayout(context: Context, on: Boolean) {
+        horizontalScrollLayout = on
+        scope.launch {
+            dataStore?.edit { prefs ->
+                prefs[booleanPreferencesKey("horizontal_scroll_layout")] = on
+            }
+        }
+    }
+
+    fun setEqualizerEnabled(context: Context, on: Boolean) {
+        equalizerEnabled = on
+        scope.launch {
+            dataStore?.edit { prefs ->
+                prefs[booleanPreferencesKey("equalizer_enabled")] = on
             }
         }
     }

@@ -1,6 +1,8 @@
 ﻿package nebula.music.ui.screens
 
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -57,7 +59,9 @@ import nebula.music.ui.theme.VoxPalettes
 import nebula.music.ui.theme.paletteById
 import nebula.music.ui.theme.toPalette
 import nebula.music.viewmodel.PlaylistsViewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * First-launch flow: genres → import → theme → artists. Each page persists
@@ -203,15 +207,35 @@ private fun ImportPage(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val repo = remember { SearchRepository() }
     val playlistsVm: PlaylistsViewModel = viewModel()
     var url by remember { mutableStateOf("") }
-    var listText by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
+
+    // Same picker PlaylistsScreen uses for "Others" — this card used to be text only,
+    // telling the user to go and find the CSV import elsewhere in the app.
+    val pickCsv = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri == null || busy) return@rememberLauncherForActivityResult
+        scope.launch {
+            val text = withContext(Dispatchers.IO) {
+                context.contentResolver.openInputStream(uri)
+                    ?.bufferedReader()?.readText().orEmpty()
+            }
+            busy = true
+            val count = playlistsVm.importCsv("Imported songs", text)
+            busy = false
+            Toast.makeText(
+                context,
+                if (count == 0) "No songs matched" else "Imported $count songs",
+                Toast.LENGTH_SHORT
+            ).show()
+        }
+    }
 
     OnboardingShell(
         title = "Bring your music",
-        subtitle = "Import a YouTube playlist or paste a song list. No accounts, ever.",
+        subtitle = "Paste a Spotify song list or pick a CSV. No accounts, ever.",
         skipLabel = "Skip",
         onSkip = onSkip,
         actionLabel = "Continue",
@@ -226,64 +250,35 @@ private fun ImportPage(
                     label = { Text("Playlist link") },
                     modifier = Modifier.fillMaxWidth()
                 )
-                Spacer(modifier = Modifier.height(8.dp))
                 HelpText(
-                    "Share → Copy link in YouTube / YouTube Music, paste it " +
-                        "here. Public playlists only."
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                PinkButton(
-                    label = if (busy) "Importing..." else "Import link",
-                    enabled = url.isNotBlank() && !busy,
-                    onClick = {
-                        scope.launch {
-                            busy = true
-                            val msg = importPlaylistUrl(repo, playlistsVm, url, "")
-                            busy = false
-                            Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
-                        }
-                    }
+                    "Share → Copy link in YouTube / YouTube Music. Public " +
+                        "playlists only."
                 )
             }
             OnboardCard(title = "Spotify song list") {
                 HelpText(
                     "In Spotify, select the songs → copy, then open the exporter " +
-                        "site to download them as CSV — or paste one " +
-                        "Artist - Title per line below.",
+                        "site to download them as CSV, then pick the file here.",
                     CHOSIC_URL
                 )
                 Spacer(modifier = Modifier.height(8.dp))
-                OutlinedTextField(
-                    value = listText,
-                    onValueChange = { listText = it },
-                    minLines = 3,
-                    label = { Text("One Artist - Title per line") },
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Spacer(modifier = Modifier.height(8.dp))
                 PinkButton(
-                    label = if (busy) "Importing..." else "Import list",
-                    enabled = listText.isNotBlank() && !busy,
-                    onClick = {
-                        scope.launch {
-                            busy = true
-                            val count = playlistsVm.importTracklist("Imported songs", listText.lines())
-                            busy = false
-                            Toast.makeText(
-                                context,
-                                if (count == 0) "No songs matched" else "Imported $count songs",
-                                Toast.LENGTH_SHORT
-                            ).show()
-                        }
-                    }
+                    label = if (busy) "Importing..." else "Import CSV file",
+                    enabled = !busy,
+                    onClick = { pickCsv.launch(arrayOf("text/*", "text/csv", "text/comma-separated-values", "application/octet-stream")) }
                 )
             }
             OnboardCard(title = "Anything else") {
                 HelpText(
                     "Copy the playlist link in your app, convert it at the " +
-                        "transfer site, then import the CSV file from " +
-                        "Playlists → + → Others.",
+                        "transfer site, then pick the CSV file here.",
                     TUNEMYMUSIC_URL
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                PinkButton(
+                    label = if (busy) "Importing..." else "Import CSV file",
+                    enabled = !busy,
+                    onClick = { pickCsv.launch(arrayOf("text/*", "text/csv", "text/comma-separated-values", "application/octet-stream")) }
                 )
             }
         }

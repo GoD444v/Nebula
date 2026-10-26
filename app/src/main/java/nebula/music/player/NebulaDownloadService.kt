@@ -81,7 +81,7 @@ class NebulaDownloadService : DownloadService(
         ).addAction(
             Notification.Action.Builder(
                 Icon.createWithResource(this, android.R.drawable.ic_menu_delete),
-                getString(R.string.nebula_remove_all_downloads),
+                getString(R.string.nebula_cancel_downloads),
                 PendingIntent.getService(
                     this,
                     0,

@@ -6,6 +6,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -28,8 +30,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.QueueMusic
+import nebula.music.data.auth.AccountLibrary
+import nebula.music.data.auth.YtCookieStore
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
@@ -39,6 +45,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -57,6 +64,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import coil3.compose.AsyncImage
 import nebula.music.data.DetailPage
 import nebula.music.data.SearchRepository
+import nebula.music.data.YtPlaylistRow
 import nebula.music.data.db.dao.PlaylistWithCount
 import nebula.music.ui.components.ChunkyAction
 import nebula.music.ui.components.ChunkyWindow
@@ -90,7 +98,10 @@ private val tileAccents = listOf(NeonPink, SunnyYellow, MintTeal)
 fun PlaylistsScreen(
     vm: PlaylistsViewModel = viewModel(),
     onOpenDownloads: () -> Unit = {},
-    onOpenPlaylist: (Long) -> Unit = {}
+    onOpenPlaylist: (Long) -> Unit = {},
+    onOpenLocal: () -> Unit = {},
+    onOpenLiked: () -> Unit = {},
+    onOpenYtPlaylist: (String, String) -> Unit = { _, _ -> }
 ) {
     val playlists by vm.playlists.collectAsState()
     val downloadsVm: DownloadViewModel = viewModel()
@@ -103,7 +114,8 @@ fun PlaylistsScreen(
 
     Column(
         modifier = Modifier
-            .fillMaxSize()
+            .fillMaxWidth()
+            .verticalScroll(rememberScrollState())
             .background(MaterialTheme.colorScheme.background)
             .padding(16.dp)
     ) {
@@ -179,6 +191,77 @@ fun PlaylistsScreen(
 
         Spacer(modifier = Modifier.height(14.dp))
 
+        // Liked songs from the signed-in YouTube account. Only shown with a
+        // cookie session — no SAPISID means the browse answers anonymously and
+        // an empty "Liked songs" page would look like data loss.
+        if (YtCookieStore.hasSapisid()) {
+            LikedEntryCard(onClick = onOpenLiked)
+            Spacer(modifier = Modifier.height(14.dp))
+        }
+
+        // Local songs, labelled exactly as EchoMusic labels this entry ("Local").
+        LocalEntryCard(onClick = onOpenLocal)
+
+        Spacer(modifier = Modifier.height(14.dp))
+
+        // Downloaded playlist — every completed download. Opens the downloaded
+        // songs playlist (not the download queue), so it plays like any playlist.
+        DownloadedEntryCard(onClick = {
+            scope.launch {
+                vm.systemPlaylistId()?.let { onOpenPlaylist(it) }
+            }
+        })
+
+        Spacer(modifier = Modifier.height(14.dp))
+
+        // The account's own YouTube playlists, under the same gate. Tapping
+        // a row opens getDetail on its browseId, so they play like any album.
+        if (YtCookieStore.hasSapisid()) {
+            val ytPlaylists by AccountLibrary.playlists.collectAsState()
+            val loaded = ytPlaylists
+            // Dedup: filter out YouTube playlists whose name contains "liked"
+            // since we already show "YouTube liked songs" as a separate entry.
+            val filteredYt = loaded?.filter { !it.title.contains("liked", ignoreCase = true) }
+            LaunchedEffect(Unit) { AccountLibrary.load() }
+            when {
+                filteredYt != null && filteredYt.isNotEmpty() -> {
+                    Text(
+                        "YOUR YOUTUBE PLAYLISTS",
+                        fontWeight = FontWeight.Black,
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.padding(bottom = 8.dp, start = 4.dp)
+                    )
+                    filteredYt.forEach { row ->
+                        YtPlaylistRowItem(
+                            title = row.title,
+                            subtitle = row.subtitle,
+                            thumbnailUrl = row.thumbnailUrl,
+                            onClick = { onOpenYtPlaylist(row.browseId, row.title) }
+                        )
+                        Spacer(modifier = Modifier.height(10.dp))
+                    }
+                    Spacer(modifier = Modifier.height(4.dp))
+                }
+                // Empty and still-loading used to look identical — the section
+                // simply vanished, so "no playlists" could not be told apart
+                // from "not signed in".
+                filteredYt != null -> Text(
+                    "No playlists in this account yet",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.padding(start = 4.dp, bottom = 4.dp)
+                )
+                else -> Text(
+                    "Loading your playlists…",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.padding(start = 4.dp, bottom = 4.dp)
+                )
+            }
+            Spacer(modifier = Modifier.height(14.dp))
+        }
+
         if (playlists.isEmpty()) {
             Box(
                 modifier = Modifier.fillMaxSize(),
@@ -189,11 +272,14 @@ fun PlaylistsScreen(
                 }
             }
         } else {
-            LazyColumn(
+            Column(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
-                modifier = Modifier.fillMaxSize()
+                modifier = Modifier.fillMaxWidth()
             ) {
-                itemsIndexed(playlists) { index, playlist ->
+                // Skip system playlists (e.g. Downloaded) — they are already
+                // shown as fixed entries above, so listing them again here
+                // would duplicate them.
+                playlists.filter { !it.playlist.isSystem }.forEachIndexed { index, playlist ->
                     PlaylistCard(
                         playlist = playlist,
                         accent = tileAccents[index % tileAccents.size],
@@ -271,7 +357,10 @@ internal fun HelpText(text: String, linkUrl: String? = null) {
         Text(
             linkUrl,
             fontSize = 12.sp,
-            color = MaterialTheme.colorScheme.secondary,
+            // primary, not secondary: secondary is MintTeal on every palette and the URL
+            // disappeared into the teal card backgrounds on the onboarding import cards.
+            color = MaterialTheme.colorScheme.primary,
+            fontWeight = FontWeight.Bold,
             modifier = Modifier.clickable {
                 context.startActivity(
                     Intent(Intent.ACTION_VIEW, android.net.Uri.parse(linkUrl))
@@ -316,6 +405,230 @@ internal suspend fun importPlaylistUrl(
  * one song" when it means "open this list". Opening the playlist and pressing Play there
  * is one unambiguous path, and the detail screen already has a Play button.
  */
+/** One YouTube playlist from the account library: cover, title, song count. */
+@Composable
+private fun YtPlaylistRowItem(
+    title: String,
+    subtitle: String,
+    thumbnailUrl: String,
+    onClick: () -> Unit
+) {
+    Box {
+        Box(
+            modifier = Modifier
+                .offset(x = 4.dp, y = 4.dp)
+                .fillMaxWidth()
+                .height(64.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(MaterialTheme.colorScheme.outline)
+        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(64.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(MaterialTheme.colorScheme.surface)
+                .border(3.dp, BorderBlack, RoundedCornerShape(16.dp))
+                .clickable(onClick = onClick)
+                .padding(horizontal = 14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            AsyncImage(
+                model = thumbnailUrl,
+                contentDescription = null,
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(RoundedCornerShape(10.dp))
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    title,
+                    fontWeight = FontWeight.Black,
+                    fontSize = 14.sp,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1
+                )
+                if (subtitle.isNotBlank()) {
+                    Text(
+                        subtitle,
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+            }
+            Icon(
+                imageVector = Icons.Filled.KeyboardArrowRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.size(22.dp)
+            )
+        }
+    }
+}
+
+/** Fixed entry for the signed-in account's YouTube likes. Same card anatomy as [LocalEntryCard]. */
+@Composable
+private fun LikedEntryCard(onClick: () -> Unit) {
+    Box {
+        Box(
+            modifier = Modifier
+                .offset(x = 4.dp, y = 4.dp)
+                .fillMaxWidth()
+                .height(64.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(MaterialTheme.colorScheme.outline)
+        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(64.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(MaterialTheme.colorScheme.surface)
+                .border(3.dp, BorderBlack, RoundedCornerShape(16.dp))
+                .clickable(onClick = onClick)
+                .padding(horizontal = 14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = Icons.Filled.Favorite,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.size(22.dp)
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                // "YouTube liked songs", not "Liked songs": a local playlist the user named
+                // "Liked songs" sits in the same list, and two identically named
+                // entries read as one duplicated item.
+                Text(
+                    "YouTube liked songs",
+                    fontWeight = FontWeight.Black,
+                    fontSize = 15.sp,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    "Liked on your YouTube account",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+            }
+            Icon(
+                imageVector = Icons.Filled.KeyboardArrowRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.size(22.dp)
+            )
+        }
+    }
+}
+
+/** Fixed entry for songs stored on the device. Label matches EchoMusic's "Local". */
+@Composable
+private fun LocalEntryCard(onClick: () -> Unit) {
+    Box {
+        Box(
+            modifier = Modifier
+                .offset(x = 4.dp, y = 4.dp)
+                .fillMaxWidth()
+                .height(64.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(MaterialTheme.colorScheme.outline)
+        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(64.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(MaterialTheme.colorScheme.surface)
+                .border(3.dp, BorderBlack, RoundedCornerShape(16.dp))
+                .clickable(onClick = onClick)
+                .padding(horizontal = 14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = Icons.Filled.QueueMusic,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.size(22.dp)
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    "Local",
+                    fontWeight = FontWeight.Black,
+                    fontSize = 15.sp,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    "Songs on this device",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+            }
+            Icon(
+                imageVector = Icons.Filled.KeyboardArrowRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.size(22.dp)
+            )
+        }
+    }
+}
+
+/** Fixed entry for the Downloaded playlist. Same card anatomy as [LocalEntryCard]. */
+@Composable
+private fun DownloadedEntryCard(onClick: () -> Unit) {
+    Box {
+        Box(
+            modifier = Modifier
+                .offset(x = 4.dp, y = 4.dp)
+                .fillMaxWidth()
+                .height(64.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(MaterialTheme.colorScheme.outline)
+        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(64.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(MaterialTheme.colorScheme.surface)
+                .border(3.dp, BorderBlack, RoundedCornerShape(16.dp))
+                .clickable(onClick = onClick)
+                .padding(horizontal = 14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = Icons.Filled.Download,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.size(22.dp)
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    "Downloaded",
+                    fontWeight = FontWeight.Black,
+                    fontSize = 15.sp,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    "Downloads on this device",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+            }
+            Icon(
+                imageVector = Icons.Filled.KeyboardArrowRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.size(22.dp)
+            )
+        }
+    }
+}
+
 @Composable
 private fun PlaylistCard(
     playlist: PlaylistWithCount,

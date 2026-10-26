@@ -8,6 +8,8 @@ import android.content.pm.ActivityInfo
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,6 +18,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -34,6 +37,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
@@ -106,15 +110,26 @@ private tailrec fun Context.findActivity(): Activity? = when (this) {
  * Mini window in the app's own idiom: 3px black border, side-extrusion 3D
  * shadow, no Material chrome. Replaces AlertDialog for the small
  * pick-one / warn-then-act prompts.
+ *
+ * `scrollContent` is OFF by default and that default matters. Wrapping the
+ * content in a scroll container makes the main axis unbounded, and a direct
+ * `Modifier.weight(1f)` child of the content scope then measures to zero
+ * height — it vanishes with no error. Only the caller knows whether its
+ * content is flat children or can be taller than the screen, so the ones that
+ * need it ask for it: the title stays pinned and the content scrolls under it.
  */
 @Composable
 fun ChunkyWindow(
     title: String,
     onDismissRequest: () -> Unit,
     onBack: (() -> Unit)? = null,
+    scrollContent: Boolean = false,
     content: @Composable ColumnScope.() -> Unit
 ) {
     val shape = RoundedCornerShape(20.dp)
+    // Headroom for the status bar, the nav bar and the 6dp shadow, measured off
+    // the real screen so the window never lands under the system bars.
+    val maxContentHeight = LocalConfiguration.current.screenHeightDp.dp - 128.dp
     Dialog(onDismissRequest = onDismissRequest) {
         Box {
             // matchParentSize -> shadow always matches the real card, and room
@@ -171,7 +186,19 @@ fun ChunkyWindow(
                     )
                 }
                 Spacer(modifier = Modifier.height(12.dp))
-                content()
+                if (scrollContent) {
+                    // content = content, not content(): the lambda is
+                    // ColumnScope-scoped and Column provides that scope, so the
+                    // groups inside keep working unchanged.
+                    Column(
+                        modifier = Modifier
+                            .heightIn(max = maxContentHeight)
+                            .verticalScroll(rememberScrollState()),
+                        content = content
+                    )
+                } else {
+                    content()
+                }
             }
         }
     }

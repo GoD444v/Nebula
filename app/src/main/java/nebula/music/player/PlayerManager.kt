@@ -22,6 +22,15 @@ class PlayerManager {
     // Fired when the current song plays to the end, so the ViewModel can
     // advance per the shuffle / loop / sequential mode.
     var onTrackEnded: (() -> Unit)? = null
+    // Echo's resolve-on-error input: a stream that dies (expired URL, 403,
+    // mid-song) lands here so the ViewModel can re-resolve and resume. The
+    // service itself never retries — same as before, it only reports.
+    var onPlaybackError: ((PlaybackException) -> Unit)? = null
+    // The player's OWN state, which is not the same thing as "we finished asking
+    // for a URL". Resolving a URL says nothing about whether audio is coming:
+    // the player then buffers, and nothing reported that. So the UI showed the
+    // song with a dead 0:00 / 0:00 and no spinner.
+    var onPlaybackStateChanged: ((Int) -> Unit)? = null
 
     // Repeat/shuffle set before the controller connects are remembered here
     // and applied on connect — toggles must survive a cold start.
@@ -45,11 +54,13 @@ class PlayerManager {
 
                     override fun onPlaybackStateChanged(state: Int) {
                         Log.d("NebulaPlayer", "state=$state playing=${ctrl.isPlaying}")
+                        onPlaybackStateChanged?.invoke(state)
                         if (state == Player.STATE_ENDED) onTrackEnded?.invoke()
                     }
 
                     override fun onPlayerError(error: PlaybackException) {
                         Log.e("NebulaPlayer", "error: ${error.errorCodeName} ${error.message}")
+                        onPlaybackError?.invoke(error)
                     }
                 })
                 controller = ctrl
@@ -147,6 +158,29 @@ class PlayerManager {
     fun setShuffleModeEnabled(enabled: Boolean) {
         pendingShuffle = enabled
         controller?.shuffleModeEnabled = enabled
+    }
+
+    /**
+     * Volume for the crossfade ramp. A missing controller reports full volume so
+     * the ramp logic can never mistake "not connected yet" for "muted".
+     */
+    fun volume(): Float = controller?.volume ?: 1f
+
+    fun setVolume(volume: Float) {
+        controller?.volume = volume
+    }
+
+    /**
+     * Drops the current item so nothing resumes after the queue empties.
+     *
+     * `pauseAudio()` alone leaves the MediaItem in the session, and PlayerViewModel's
+     * togglePlay() treats a non-null currentMediaItem() as resumable — so emptying the
+     * queue and pressing Play would resume a song the user had just deleted.
+     */
+    fun stopPlayback() {
+        controller?.stop()
+        controller?.clearMediaItems()
+        pendingItem = null
     }
 
     fun releasePlayer() {

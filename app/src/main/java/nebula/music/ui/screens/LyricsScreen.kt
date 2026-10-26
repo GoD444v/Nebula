@@ -4,8 +4,10 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -40,6 +42,7 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import nebula.music.data.models.LyricHighlight
@@ -56,6 +59,8 @@ import kotlin.math.sin
  * (Settings → Lyrics). `expanded` removes the card height caps for fullscreen.
  * `onFullScreen` — when non-null, draws the chunky full-screen button in the
  * panel's top-right corner; pass it only where full screen is reachable.
+ * `height` is the panel's own height; the full player animates it 360↔280 so the card
+ * shrinks in step with the box it sits in rather than overflowing it mid-animation.
  * Plain-text fallback when no timestamps exist. VoxMusic card: 3px border + extrusion.
  */
 @Composable
@@ -63,6 +68,7 @@ fun LyricsScreen(
     vm: PlayerViewModel,
     modifier: Modifier = Modifier,
     expanded: Boolean = false,
+    height: Dp = 360.dp,
     onFullScreen: (() -> Unit)? = null
 ) {
     val response by vm.lyrics.collectAsState()
@@ -80,20 +86,28 @@ fun LyricsScreen(
         ?: MaterialTheme.colorScheme.primary
     val dim = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
 
+    // The 3D extrusion. The design's black box vanishes on the AMOLED
+    // palette (pure-black background), so a dark background lifts it
+    // to a dark grey that still reads as a raised edge.
+    val bgLuminance = with(MaterialTheme.colorScheme.background) {
+        red * 0.299f + green * 0.587f + blue * 0.114f
+    }
+    val shadowColor = if (bgLuminance < 0.5f) Color(0xFF262626) else MaterialTheme.colorScheme.outline
+
     Box(modifier = modifier.fillMaxWidth()) {
         // Side-extrusion 3D shadow
         Box(
             modifier = Modifier
                 .offset(x = 4.dp, y = 4.dp)
                 .fillMaxWidth()
-                .then(if (expanded) Modifier.fillMaxSize() else Modifier.heightIn(min = 120.dp, max = 420.dp))
+                .then(if (expanded) Modifier.fillMaxSize() else Modifier.height(height))
                 .clip(RoundedCornerShape(20.dp))
-                .background(MaterialTheme.colorScheme.outline)
+                .background(shadowColor)
         )
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .then(if (expanded) Modifier.fillMaxSize() else Modifier.heightIn(min = 120.dp, max = 420.dp))
+                .then(if (expanded) Modifier.fillMaxSize() else Modifier.height(height))
                 .clip(RoundedCornerShape(20.dp))
                 .background(MaterialTheme.colorScheme.surface)
                 .border(3.dp, BorderBlack, RoundedCornerShape(20.dp))
@@ -172,20 +186,16 @@ fun LyricsScreen(
                     .align(Alignment.TopEnd)
                     .padding(top = 8.dp, end = 8.dp)
             ) {
-                Box(
-                    modifier = Modifier
-                        .offset(x = 3.dp, y = 3.dp)
-                        .size(36.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(MaterialTheme.colorScheme.outline)
-                )
+                // Deliberately bare — no 3D extrusion and no border, unlike every other
+                // chunky control in the app. It floats over scrolling lyrics, so any
+                // filled or outlined box sits on top of the words it covers. (An
+                // extrusion made it worse, not better: `outline` is BorderBlack and a
+                // transparent fill covers nothing, so the shadow box showed through and
+                // became the button's fill — it rendered solid black.) Nothing here but
+                // the icon and the tap target.
                 IconButton(
                     onClick = onFullScreen,
-                    modifier = Modifier
-                        .size(36.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(MaterialTheme.colorScheme.primary)
-                        .border(3.dp, BorderBlack, RoundedCornerShape(12.dp))
+                    modifier = Modifier.size(36.dp)
                 ) {
                     Icon(
                         Icons.Filled.Fullscreen,
@@ -228,24 +238,71 @@ private fun SyncedList(
     ) {
         itemsIndexed(lines, key = { i, _ -> i }) { i, line ->
             val active = i == activeIndex
-            if (!active) {
-                // Static text. Reads no playback state, so it never recomposes
-                // while the song plays. Non-active lines do no per-word work at
-                // all — a line is a single plain Text until it is the sung one.
-                Text(
-                    line.text,
-                    fontWeight = FontWeight.Normal,
-                    fontSize = 16.sp,
-                    lineHeight = 26.sp,
-                    textAlign = TextAlign.Center,
-                    color = dim,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { onSeek(line.timeMs) }
-                        .padding(horizontal = 20.dp, vertical = 6.dp)
-                )
-            } else {
-                ActiveLine(vm = vm, line = line, style = style, accent = accent, dim = dim, onSeek = { onSeek(line.timeMs) })
+            // The English sits ABOVE the original, so the eye reads the meaning
+            // first. A Column is the entire cost: ActiveLine still owns the 30fps
+            // read and this lambda still reads no playback state, so the static
+            // lines recompose exactly as often as they did before.
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                // The reading sits ABOVE the English rather than between it and the
+                // original: the ask was one sub-line sitting "just above" the line it
+                // explains, so anything added later stacks on top of that instead of
+                // pushing it away. Only Korean lines have one.
+                if (line.romanized.isNotEmpty()) {
+                    Text(
+                        line.romanized,
+                        fontWeight = FontWeight.Normal,
+                        fontSize = 12.sp,
+                        lineHeight = 16.sp,
+                        textAlign = TextAlign.Center,
+                        // Dimmer than the English below it: this is a pronunciation
+                        // hint, not the meaning, and the original has to stay the
+                        // thing the eye lands on.
+                        color = dim.copy(alpha = if (active) 0.50f else 0.30f),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onSeek(line.timeMs) }
+                            .padding(horizontal = 20.dp, vertical = 1.dp)
+                    )
+                }
+                if (line.translation.isNotEmpty()) {
+                    Text(
+                        line.translation,
+                        fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
+                        fontSize = if (active) 15.sp else 13.sp,
+                        lineHeight = if (active) 20.sp else 18.sp,
+                        textAlign = TextAlign.Center,
+                        // Smaller and dimmer than the line it explains, and dimmer
+                        // still when it is not the sung one: the accent-coloured
+                        // Japanese has to stay the thing the eye lands on.
+                        color = dim.copy(alpha = if (active) 0.72f else 0.42f),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onSeek(line.timeMs) }
+                            .padding(horizontal = 20.dp, vertical = 2.dp)
+                    )
+                }
+                if (!active) {
+                    // Static text. Reads no playback state, so it never recomposes
+                    // while the song plays. Non-active lines do no per-word work at
+                    // all — a line is a single plain Text until it is the sung one.
+                    Text(
+                        line.text,
+                        fontWeight = FontWeight.Normal,
+                        fontSize = 16.sp,
+                        lineHeight = 26.sp,
+                        textAlign = TextAlign.Center,
+                        color = dim,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onSeek(line.timeMs) }
+                            .padding(horizontal = 20.dp, vertical = 6.dp)
+                    )
+                } else {
+                    ActiveLine(vm = vm, line = line, style = style, accent = accent, dim = dim, onSeek = { onSeek(line.timeMs) })
+                }
             }
         }
     }

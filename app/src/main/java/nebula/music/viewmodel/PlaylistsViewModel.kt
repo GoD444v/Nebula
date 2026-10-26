@@ -8,8 +8,10 @@ import nebula.music.data.SearchRepository
 import nebula.music.data.db.NebulaDatabase
 import nebula.music.data.download.NebulaDownloads
 import nebula.music.data.db.dao.PlaylistWithCount
+import nebula.music.data.db.dao.PinnedPlaylist
 import nebula.music.data.db.entities.PlaylistEntity
 import nebula.music.data.db.entities.PlaylistSongEntity
+import nebula.music.data.db.entities.SpeedDialItem
 import nebula.music.data.models.SearchResult
 import nebula.music.ui.screens.PlaylistSortType
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -58,6 +60,7 @@ class PlaylistsViewModel(app: Application) : AndroidViewModel(app) {
 
     private val db = NebulaDatabase.getDatabase(app)
     private val dao = db.playlistDao()
+    private val speedDial = db.speedDialDao()
 
     init {
         // Repairs the Downloaded playlist against anything the listener missed while
@@ -71,6 +74,25 @@ class PlaylistsViewModel(app: Application) : AndroidViewModel(app) {
     val playlists: StateFlow<List<PlaylistWithCount>> =
         dao.observePlaylists()
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /**
+     * The speed dial: playlists the user pinned for one-tap access from Home, in pin order.
+     *
+     * Lives here rather than in a ViewModel of its own because it is playlists, and the
+     * pin lives in the same database as the playlist it points at.
+     */
+    val pinnedPlaylists: StateFlow<List<PinnedPlaylist>> =
+        speedDial.observePinned()
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** Adds [playlistId] to the dial. Idempotent — the pin is keyed on the playlist id. */
+    fun pinToSpeedDial(playlistId: Long) = viewModelScope.launch {
+        speedDial.pin(SpeedDialItem(playlistId = playlistId))
+    }
+
+    fun unpinFromSpeedDial(playlistId: Long) = viewModelScope.launch {
+        speedDial.unpin(playlistId)
+    }
 
     /** Which playlist the detail screen is showing; null = showing none. */
     private val _selectedPlaylistId = MutableStateFlow<Long?>(null)
@@ -140,6 +162,17 @@ class PlaylistsViewModel(app: Application) : AndroidViewModel(app) {
 
     fun delete(id: Long) = viewModelScope.launch {
         dao.delete(id)
+    }
+
+    /**
+     * Takes [videoId] out of the playlist [playlistId].
+     *
+     * The row is deleted, not flagged: a song the user removes from their own playlist
+     * should be gone from it. Any downloaded file is untouched — the Downloaded playlist
+     * is a separate list, built from the download index.
+     */
+    fun removeSong(playlistId: Long, videoId: String) = viewModelScope.launch {
+        dao.removeSong(playlistId, videoId)
     }
 
     /**

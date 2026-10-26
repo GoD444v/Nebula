@@ -90,7 +90,8 @@ private const val CLEAR_ALL = "*"
 fun DownloadQueueScreen(
     onBack: () -> Unit,
     playlistsVm: PlaylistsViewModel? = null,
-    playerVm: PlayerViewModel? = null
+    playerVm: PlayerViewModel? = null,
+    onListenTogether: () -> Unit = {}
 ) {
     val vm: DownloadViewModel = viewModel()
     val downloads by vm.downloads.collectAsState()
@@ -143,6 +144,10 @@ fun DownloadQueueScreen(
             onShare = {
                 menuVideoId = null
                 shareSong(context, menuSong)
+            },
+            onListenTogether = {
+                menuVideoId = null
+                onListenTogether()
             }
         )
     }

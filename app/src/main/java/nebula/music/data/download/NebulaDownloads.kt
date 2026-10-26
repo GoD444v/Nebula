@@ -261,8 +261,6 @@ object NebulaDownloads {
         return dataSpec.buildUpon().setUri(Uri.parse(url)).build()
     }
 
-    // ---- Public API used by the ViewModel / UI ----
-
     /**
      * Takes the whole [SearchResult], not a bare id and title: the Downloaded playlist
      * writes its rows from the download index, and the index only ever stores what is
@@ -289,6 +287,25 @@ object NebulaDownloads {
     }
 
     fun observe(songId: String): Flow<Download?> = downloads.map { it[songId] }
+
+    /**
+     * Queues every song in [songs] that is not already on disk. Returns how many were
+     * actually queued, so the caller can tell the user "nothing new" instead of claiming a
+     * download that never started.
+     *
+     * Two filters, and the first one matters more than it looks: a playlist routinely
+     * repeats a song, and [enqueue] is not idempotent, so a list with the same track three
+     * times would fire three competing downloads for one file. [isDownloaded] is the second
+     * — re-downloading a finished song restarts it from zero and burns the user's data.
+     *
+     * Deliberately not parallel and not batched: [enqueue] already hands each request to
+     * Media3's own scheduler, which is what paces them.
+     */
+    fun enqueueAll(songs: List<SearchResult>): Int {
+        val pending = pendingDownloads(songs, ::isDownloaded)
+        pending.forEach { enqueue(it) }
+        return pending.size
+    }
 
     /**
      * Media3 1.6.1 has NO per-download pause: `DownloadManager` exposes only
@@ -424,6 +441,23 @@ object DownloadPrefs {
     suspend fun setWifiOnly(enabled: Boolean) {
         checkNotNull(appContext).dataStore.edit { it[WIFI_ONLY] = enabled }
     }
+}
+
+/**
+ * The songs a bulk download still needs, in order: duplicates collapsed, and anything
+ * [isDone] already holds dropped.
+ *
+ * Top-level and Android-free so DownloadAllTest can cover it on the JVM — [NebulaDownloads]
+ * itself cannot be constructed there. The dedupe is the half worth testing: [enqueue] is not
+ * idempotent, so a list that repeats a track would otherwise start several competing
+ * downloads for one file, and whichever finished last is the copy left on disk.
+ */
+internal fun pendingDownloads(
+    songs: List<SearchResult>,
+    isDone: (String) -> Boolean
+): List<SearchResult> {
+    val seen = HashSet<String>(songs.size)
+    return songs.filter { seen.add(it.videoId) && !isDone(it.videoId) }
 }
 
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "download_prefs")

@@ -5,7 +5,23 @@ data class LyricLine(
     val timeMs: Long,
     val text: String,
     /** Per-word timings when the provider supplies them (TTML/KRC); empty = line-level only. */
-    val words: List<LyricWord> = emptyList()
+    val words: List<LyricWord> = emptyList(),
+    /**
+     * English rendering of [text], drawn as a smaller line above it.
+     *
+     * Lives on the line itself rather than in a parallel list, so it can never
+     * drift out of step with the line it belongs to. Empty = nothing to show,
+     * which is also the case for lyrics that are already English.
+     */
+    val translation: String = "",
+
+    /**
+     * Latin reading of [text], drawn above the translation.
+     *
+     * Only Korean songs get one — see Romanizer in data/lyrics for why Japanese
+     * cannot be done without a kanji dictionary. Empty = nothing to show.
+     */
+    val romanized: String = ""
 )
 
 /** One word with its own start/end — powers karaoke highlighting. */

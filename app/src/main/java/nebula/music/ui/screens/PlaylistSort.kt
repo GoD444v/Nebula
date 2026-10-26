@@ -5,62 +5,54 @@ import java.text.Collator
 import java.util.Locale
 
 /**
- * How a playlist's songs are ordered on screen.
+ * Ordering options for a remote playlist / album track list.
  *
- * Declaration order is the menu order, and the labels are the ones the reference
- * implementation shows. CUSTOM is first and is the default because it is the only
- * option that can lose a direction — everything else has an ascending and descending
- * side, which manual order has no meaning for.
+ * Name and Artist mirror `LocalSongSortType` exactly, so the two sort menus use the
+ * same words in the same order. ALBUM is deliberately absent: the local songs carry one,
+ * but a YouTube search result has no album name to sort on, and offering a sort that
+ * cannot sort anything is worse than not offering it.
  */
 enum class PlaylistSortType(val label: String) {
-    CUSTOM("Custom order"),
+    DEFAULT("Default order"),
     NAME("Name"),
     ARTIST("Artist"),
-    DATE_ADDED("Date added"),
-    PLAY_TIME("Play time")
+    CUSTOM("Custom order"),
+    // The partner asked for this one by name: a playlist that mixes old and new additions
+    // reads best newest-first. It sorts the STORED ROWS, not the fetched list, so it
+    // needs the addedAt the entity carries — see sortRemoteTracks for why it cannot sort
+    // it here.
+    DATE_ADDED("Date added")
 }
 
 /**
- * Sorts [songs] for display only.
+ * Sorts [tracks] for DISPLAY ONLY — the fetched list is untouched.
  *
- * Never mutates anything and never reorders storage: the playlist's `position` values are
- * the user's arrangement, and rewriting them from a sort would destroy it with no way
- * back. This is the property that makes CUSTOM a reliable way back — the stored order is
- * always intact, so returning to it is a no-op rather than a recovery.
- *
- * Custom passes the list through untouched and ignores [descending], because reversing a
- * hand-arranged playlist is never what the user meant by tapping "descending".
- *
- * Name and Artist use a [Collator] at PRIMARY strength, not `String.compareTo`: the
- * latter sorts every capital before every lowercase, so "abbey road" lands after "Zoë",
- * which reads as broken.
- *
- * DATE_ADDED reads [SearchResult.addedAt], which `playlist_songs` has always stored. It
- * used to return the list untouched and so meant insertion order — a label that lied.
- *
- * PLAY_TIME still sorts by [SearchResult.playCount], which is always 0 because nothing
- * increments it yet. That one is wired for a future, not for today.
+ * The page is re-fetched on every open, so a remote sort cannot outlive the screen it
+ * was set on; persisting it would imply an ordering the next open immediately discards.
+ * Name/Artist/Album use a [Collator] at PRIMARY strength for the reason spelled out in
+ * `sortSongs`: `String.compareTo` sorts every capital before every lowercase, which put
+ * "abbey road" after "Zoë".
  */
-fun sortSongs(
-    songs: List<SearchResult>,
+fun sortRemoteTracks(
+    tracks: List<SearchResult>,
     sortType: PlaylistSortType,
     descending: Boolean
 ): List<SearchResult> {
-    if (sortType == PlaylistSortType.CUSTOM || songs.size < 2) return songs
+    if (tracks.size < 2 || sortType == PlaylistSortType.DEFAULT) return tracks
 
     val collator = Collator.getInstance(Locale.getDefault()).apply {
         strength = Collator.PRIMARY
     }
-
-    val ascending = when (sortType) {
-        PlaylistSortType.CUSTOM -> songs
-        PlaylistSortType.NAME -> songs.sortedWith(compareBy(collator) { it.title })
-        PlaylistSortType.ARTIST -> songs.sortedWith(compareBy(collator) { it.artist })
-        // Stable, so songs sharing a millisecond keep their input order instead of
-        // swapping between reads — which would look like the reorder-reset bug.
-        PlaylistSortType.DATE_ADDED -> songs.sortedBy { it.addedAt }
-        PlaylistSortType.PLAY_TIME -> songs.sortedBy { it.playCount }
+    val sorted = when (sortType) {
+        PlaylistSortType.DEFAULT -> tracks
+        PlaylistSortType.NAME -> tracks.sortedWith { a, b -> collator.compare(a.title, b.title) }
+        PlaylistSortType.ARTIST -> tracks.sortedWith { a, b -> collator.compare(a.artist, b.artist) }
+        PlaylistSortType.CUSTOM -> tracks
+        // Date added sorts the STORED ROWS by their addedAt, which this function cannot
+        // see — it only ever gets fetched tracks. The playlist screen pre-sorts its rows
+        // by addedAt and asks for DEFAULT here, so this branch is the safety net for a
+        // caller that passes DATE_ADDED directly: the rows keep the order they arrived in.
+        PlaylistSortType.DATE_ADDED -> tracks
     }
-
-    return if (descending) ascending.asReversed() else ascending
+    return if (descending) sorted.reversed() else sorted
 }
