@@ -7,8 +7,7 @@ HEAD
   <p><b>Ad-free YouTube Music streaming with synced lyrics, offline downloads, local playlists, and a hand-built VoxMusic-inspired design.</b></p>
 </div>
 
-# Nebula
- 27110a5a8f6df538d8e5f6c8e2fa5b4c44fa1d79
+# Nebula
 
 ## Overview
 
@@ -118,7 +117,6 @@ architecture, modularity, and high performance.
 - **CSV Export + Share** — Echo-compatible CSV or plain-text share from the
   playlist overflow.
 
- 27110a5a8f6df538d8e5f6c8e2fa5b4c44fa1d79
 - **Albums Browser** — Explore albums with detail pages.
 - **Local Media** — Scan and play on-device audio files.
 
@@ -147,8 +145,7 @@ architecture, modularity, and high performance.
 </details>
 
 <details>
-
-27110a5a8f6df538d8e5f6c8e2fa5b4c44fa1d79
+
 <summary><b>Lyrics</b></summary>
 
 - **Synced Lyrics** — Real-time synchronized lyrics from multiple providers.
